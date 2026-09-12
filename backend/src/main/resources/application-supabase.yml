@@ -1,0 +1,5 @@
+# Values are supplied by the environment / Azure App Service application settings.
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:5}

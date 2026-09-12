@@ -1,0 +1,8 @@
+# The default workstation profile deliberately starts without a database.
+# Use SPRING_PROFILES_ACTIVE=supabase plus the three SPRING_DATASOURCE_* variables
+# to connect to Supabase. No credentials belong in this repository.
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
