@@ -15,7 +15,13 @@ from models.schemas import (
     AmbientResponse,
     AmbientSuggestion,
 )
-from services.gemini_service import gemini_service
+from services.gemini_service import (
+    gemini_service,
+    GeminiVoiceExtractionResponse,
+    GeminiExtractedField,
+    GeminiRegisterOcrResponse,
+    GeminiRegisterRow,
+)
 
 
 class TestAIFeatures(unittest.TestCase):
@@ -86,28 +92,31 @@ class TestAIFeatures(unittest.TestCase):
     @patch("services.gemini_service.call_multimodal")
     def test_voice_dictation_static_module(self, mock_multimodal):
         """Voice dictation for static module returns transcript and structured fields in one call."""
-        mock_multimodal.return_value = VoiceExtractionResponse(
+        mock_multimodal.return_value = GeminiVoiceExtractionResponse(
             transcript="बाळाचे नाव आरव पाटील, वजन आठ किलो, उंची सत्तर सेमी",
-            fields={"child_name": "आरव पाटील", "weight_kg": 8.0, "height_cm": 70.0},
+            fields=[
+                GeminiExtractedField(key="child_name", value="आरव पाटील"),
+                GeminiExtractedField(key="weight_kg", value="8.0"),
+                GeminiExtractedField(key="height_cm", value="70.0"),
+            ],
             fields_detected=3,
         )
 
         res = gemini_service.extract_voice_multimodal(
             audio_bytes=b"dummy_audio",
             mime_type="audio/webm",
-            module_type="child_growth",
         )
         self.assertIn("आरव", res.transcript)
-        self.assertEqual(res.fields["weight_kg"], 8.0)
+        self.assertEqual(float(res.fields["weight_kg"]), 8.0)
         self.assertEqual(res.fields_detected, 3)
 
     @patch("services.gemini_service.call_multimodal")
     def test_voice_dictation_dynamic_survey(self, mock_multimodal):
         """Voice dictation with dynamic form_fields injects custom fields into prompt."""
         custom_fields = '[{"id":"custom_bp","label":"Blood Pressure","type":"text"}]'
-        mock_multimodal.return_value = VoiceExtractionResponse(
+        mock_multimodal.return_value = GeminiVoiceExtractionResponse(
             transcript="BP is 120 by 80",
-            fields={"custom_bp": "120/80"},
+            fields=[GeminiExtractedField(key="custom_bp", value="120/80")],
             fields_detected=1,
         )
 
@@ -120,13 +129,21 @@ class TestAIFeatures(unittest.TestCase):
     @patch("services.gemini_service.call_multimodal")
     def test_register_ocr_flags_low_confidence(self, mock_multimodal):
         """Register OCR must set needs_review=True if confidence < 0.8."""
-        mock_multimodal.return_value = RegisterOcrResponse(
+        mock_multimodal.return_value = GeminiRegisterOcrResponse(
             register_type="family_survey",
             target_collection="household_members",
             total_rows_found=2,
             rows=[
-                RegisterRow(fields={"name": "Suresh"}, confidence=0.92, needs_review=False),
-                RegisterRow(fields={"name": "Ramesh"}, confidence=0.65, needs_review=False),  # should be auto-flagged
+                GeminiRegisterRow(
+                    fields=[GeminiExtractedField(key="name", value="Suresh")],
+                    confidence=0.92,
+                    needs_review=False
+                ),
+                GeminiRegisterRow(
+                    fields=[GeminiExtractedField(key="name", value="Ramesh")],
+                    confidence=0.65,
+                    needs_review=False
+                ),
             ],
             confidence=0.8,
         )

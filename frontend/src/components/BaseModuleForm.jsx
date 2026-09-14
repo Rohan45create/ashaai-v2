@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { apiFetch } from '../utils/api';
 import { useAuthStore } from '../stores/authStore';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -7,8 +7,48 @@ import AmbientToggle from './AmbientToggle';
 import AadhaarAutofill from './AadhaarAutofill';
 import { useTx } from '../context/TranslationContext';
 import MalnutritionScannerWidget from './widgets/MalnutritionScannerWidget';
+import MemberLookupField from './MemberLookupField';
 
-export default function BaseModuleForm({ title, moduleIcon, collectionName, fields, sections, preGate, moduleName, onSubmit, onFormChange, showAadhaar = true, aadhaarPersonLabel = '', extraData = {}, onAadhaarScanned, afterSubmit }) {
+/**
+ * Evaluates a show_if spec against the current formData.
+ * Supports:
+ *   - string: shows if formData[string] is truthy
+ *   - { field, equals } object: shows if formData[field] === equals
+ *   - { field, not_equals } object: shows if formData[field] !== not_equals
+ */
+function evaluateShowIf(showIf, formData) {
+  if (!showIf) return true;
+  if (typeof showIf === 'string') return !!formData[showIf];
+  if (typeof showIf === 'object') {
+    const val = formData[showIf.field];
+    if ('equals' in showIf) return val === showIf.equals;
+    if ('not_equals' in showIf) return val !== showIf.not_equals;
+    if ('truthy' in showIf) return !!val;
+  }
+  return true;
+}
+
+/**
+ * Evaluates a `derives` spec against the current formData.
+ * Schema shape: { from: "field_id", thresholds: [ { gte, value }, { lt, value } ] }
+ * Thresholds are evaluated in order; first match wins.
+ */
+function evaluateDerives(derives, formData) {
+  if (!derives || !derives.from) return '';
+  const raw = parseFloat(formData[derives.from]);
+  if (isNaN(raw)) return '';
+  const thresholds = derives.thresholds || [];
+  for (const t of thresholds) {
+    if (t.gte !== undefined && raw >= t.gte) return t.value;
+    if (t.gt !== undefined && raw > t.gt) return t.value;
+    if (t.lte !== undefined && raw <= t.lte) return t.value;
+    if (t.lt !== undefined && raw < t.lt) return t.value;
+    if (t.eq !== undefined && raw === t.eq) return t.value;
+  }
+  return '';
+}
+
+export default function BaseModuleForm({ title, moduleIcon, templateIcon, collectionName, fields, sections, preGate, moduleName, onSubmit, onFormChange, showAadhaar = true, aadhaarPersonLabel = '', extraData = {}, onAadhaarScanned, afterSubmit, renderCustomTop }) {
   const { user, ashaId: storeAshaId } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
@@ -298,13 +338,21 @@ export default function BaseModuleForm({ title, moduleIcon, collectionName, fiel
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center space-x-3">
           <div className="w-12 h-12 bg-[#EAF3DE] rounded-full flex items-center justify-center text-[#1D9E75]">
-            <span className="material-symbols-outlined text-2xl">{moduleIcon}</span>
+            {/* templateIcon is a lucide-react component; moduleIcon is a material-symbols string */}
+            {templateIcon ? (
+              <span className="text-[#1D9E75]">{templateIcon}</span>
+            ) : (
+              <span className="material-symbols-outlined text-2xl">{moduleIcon}</span>
+            )}
           </div>
           <h2 className="text-xl font-bold text-[#1A1A18]">{title}</h2>
         </div>
         {/* Ambient AI toggle */}
         <AmbientToggle module={voiceModule} onAcceptSuggestion={handleAmbientSuggestion} />
       </div>
+
+      {/* Custom top section (e.g. ANC genetic prediction) */}
+      {renderCustomTop && <renderCustomTop />}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         {isViewMode && (
@@ -364,11 +412,76 @@ export default function BaseModuleForm({ title, moduleIcon, collectionName, fiel
             {/* Render Sections or Fields */}
             {(() => {
               const renderField = (field, sectionId = null, index = null) => {
-                if (field.show_if && !formData[field.show_if]) return null; // Simple visibility toggle
+                // Extended show_if: supports string (truthy) and {field, equals/not_equals} object
+                if (field.show_if && !evaluateShowIf(field.show_if, formData)) return null;
 
                 const val = (sectionId && index !== null) ? (formData[sectionId]?.[index]?.[field.id] || '') : (formData[field.id] || '');
                 const errorKey = sectionId && index !== null ? `${sectionId}[${index}].${field.id}` : field.id;
 
+                // member_lookup: search-as-you-type against household_members, stores UUID
+                if (field.type === 'member_lookup') {
+                  return (
+                    <MemberLookupField
+                      key={errorKey}
+                      field={field}
+                      value={val || null}
+                      onSelect={(fId, selection) => {
+                        setFormData(prev => {
+                          const next = { ...prev, [fId]: selection };
+                          if (onFormChange) onFormChange(next);
+                          return next;
+                        });
+                        if (errors[fId]) setErrors(prev => { const n = { ...prev }; delete n[fId]; return n; });
+                      }}
+                      disabled={false}
+                      error={errors[errorKey]}
+                    />
+                  );
+                }
+
+                // computed: derives its value from another field via schema thresholds (read-only)
+                if (field.type === 'computed' || field.derives) {
+                  const derived = evaluateDerives(field.derives, formData);
+                  // Auto-apply derived value into formData when it changes
+                  if (derived && formData[field.id] !== derived) {
+                    // Use a ref-safe approach: mutate formData in render is bad;
+                    // we schedule a state update only if value actually changed.
+                    // Using useEffect is not possible inside renderField, so we
+                    // trigger it via a 0-timeout to avoid React batching issues.
+                    setTimeout(() => {
+                      setFormData(prev => {
+                        if (prev[field.id] === derived) return prev;
+                        const next = { ...prev, [field.id]: derived };
+                        if (onFormChange) onFormChange(next);
+                        return next;
+                      });
+                    }, 0);
+                  }
+                  const derivedConfig = field.derivedDisplay || {};
+                  const colorMap = { GREEN: '#1D9E75', YELLOW: '#F0A500', RED: '#E24B4A',
+                    NORMAL: '#1D9E75', MAM: '#F0A500', SAM: '#E24B4A' };
+                  const color = colorMap[derived] || '#5F5E5A';
+                  return (
+                    <div key={errorKey} className="mb-4">
+                      <label className="block text-sm font-medium mb-1 text-[#5F5E5A]">
+                        {tx(field.label)}
+                      </label>
+                      <div className="flex items-center gap-3 p-3 border border-[#D3D1C7] rounded-xl bg-gray-50">
+                        <span className="material-symbols-outlined" style={{ color }}>
+                          {derived === 'GREEN' || derived === 'NORMAL' ? 'check_circle' :
+                           derived === 'YELLOW' || derived === 'MAM' ? 'warning' :
+                           derived === 'RED' || derived === 'SAM' ? 'crisis_alert' : 'calculate'}
+                        </span>
+                        <span className="font-bold" style={{ color }}>
+                          {derived || '—'}
+                        </span>
+                        <span className="text-xs text-gray-400 ml-1">(auto-computed)</span>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // photo field with ai_action
                 if (field.ai_action === 'malnutrition_grade') {
                   return (
                     <MalnutritionScannerWidget 

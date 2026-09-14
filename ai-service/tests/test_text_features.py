@@ -36,15 +36,19 @@ class TestTextFeatures(unittest.TestCase):
         self.assertEqual(res2.source, "cache_24h")
         mock_text.assert_not_called()
 
-    @patch("services.gemini_service.call_text")
-    def test_cross_field_pregnant_mother_underage(self, mock_text):
+    @patch("services.gemini_service.call_critical_consensus")
+    def test_cross_field_pregnant_mother_underage(self, mock_consensus):
         """Cross-field check must flag pregnant woman recorded age < 14."""
-        mock_text.return_value = CrossFieldValidationResponse(
-            has_conflict=True,
-            conflicts=["Pregnant mother recorded with implausible age 11 (<14 years)."],
-            severity="HIGH",
-            suggested_action="Supervisor review required",
-        )
+        mock_consensus.return_value = {
+            "result": CrossFieldValidationResponse(
+                has_conflict=True,
+                conflicts=["Pregnant mother recorded with implausible age 11 (<14 years)."],
+                severity="HIGH",
+                suggested_action="Supervisor review required",
+            ),
+            "confidence": "high",
+            "flag_for_review": False
+        }
 
         res = gemini_service.validate_cross_field(
             entity_type="pregnancy",
@@ -54,12 +58,16 @@ class TestTextFeatures(unittest.TestCase):
         self.assertEqual(res.severity, "HIGH")
         self.assertTrue(any("11" in c for c in res.conflicts))
 
-    @patch("services.gemini_service.call_text")
-    def test_cross_field_anc_chronology_conflict(self, mock_text):
+    @patch("services.gemini_service.call_critical_consensus")
+    def test_cross_field_anc_chronology_conflict(self, mock_consensus):
         """Cross-field check must flag ANC2 date recorded before ANC1 date."""
-        mock_text.return_value = CrossFieldValidationResponse(
-            has_conflict=False, conflicts=[], severity="LOW"
-        )
+        mock_consensus.return_value = {
+            "result": CrossFieldValidationResponse(
+                has_conflict=False, conflicts=[], severity="LOW"
+            ),
+            "confidence": "high",
+            "flag_for_review": False
+        }
 
         # Deterministic check ensures it gets flagged even if mock returns clean
         res = gemini_service.validate_cross_field(
@@ -75,10 +83,10 @@ class TestTextFeatures(unittest.TestCase):
         self.assertEqual(res.severity, "HIGH")
         self.assertTrue(any("ANC2 date" in c for c in res.conflicts))
 
-    @patch("services.gemini_service.call_text")
-    def test_multilingual_survey_translation(self, mock_text):
+    @patch("services.gemini_service.call_translation")
+    def test_multilingual_survey_translation(self, mock_translation):
         """Survey builder translation must return en, mr, and hi translations."""
-        mock_text.return_value = TranslationResponse(
+        mock_translation.return_value = TranslationResponse(
             en="Child weight in kilograms",
             mr="किलोग्रॅममध्ये बालकाचे वजन",
             hi="किलोग्राम में बच्चे का वजन",
