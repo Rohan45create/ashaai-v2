@@ -26,6 +26,7 @@ public class AdminService {
     private final DeathRecordRepository deathRecordRepository;
     private final FamilyPlanningRepository familyPlanningRepository;
     private final VisitRepository visitRepository;
+    private final AshaHeadRepository ashaHeadRepository;
 
     public AdminService(
             AshaRepository ashaRepository,
@@ -40,7 +41,8 @@ public class AdminService {
             NcdRecordRepository ncdRecordRepository,
             DeathRecordRepository deathRecordRepository,
             FamilyPlanningRepository familyPlanningRepository,
-            VisitRepository visitRepository
+            VisitRepository visitRepository,
+            AshaHeadRepository ashaHeadRepository
     ) {
         this.ashaRepository = ashaRepository;
         this.householdRepository = householdRepository;
@@ -55,6 +57,7 @@ public class AdminService {
         this.deathRecordRepository = deathRecordRepository;
         this.familyPlanningRepository = familyPlanningRepository;
         this.visitRepository = visitRepository;
+        this.ashaHeadRepository = ashaHeadRepository;
     }
 
     private boolean isAshaUnderHead(Asha asha, UUID headId) {
@@ -208,5 +211,16 @@ public class AdminService {
         });
         
         return events.stream().limit(20).collect(Collectors.toList());
+    }
+
+    public Asha addWorker(UUID headId, String name, String phone, String village, String district) {
+        AshaHead head = ashaHeadRepository.findById(headId).orElseThrow(() -> new RuntimeException("Head not found"));
+        Asha asha = new Asha();
+        asha.setHead(head);
+        asha.setName(name);
+        asha.setPhone(phone);
+        asha.setVillage(village);
+        asha.setDistrict(district);
+        return ashaRepository.save(asha);
     }
 }

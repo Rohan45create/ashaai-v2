@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../../stores/authStore';
 import { apiFetch } from '../../utils/api';
 import AdminReportModal from '../../components/AdminReportModal';
+import { getAllFeedback, clearFeedback } from '../../utils/feedbackDb';
 
 const FALLBACK_ASHA_IDS = [
   'asha_lata_001', 'asha_priya_002', 'asha_kavita_003',
@@ -61,6 +62,59 @@ export default function Reports() {
     URL.revokeObjectURL(url);
   };
 
+  const handleExportTrainingData = async () => {
+    try {
+      const data = await getAllFeedback();
+      if (!data || data.length === 0) {
+        alert('No training data available to export on this device.');
+        return;
+      }
+      
+      const exportItems = await Promise.all(data.map(async item => {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            resolve({
+              id: item.id,
+              timestamp: item.timestamp,
+              aiGrade: item.aiGrade,
+              correctedGrade: item.correctedGrade,
+              photoBase64: reader.result
+            });
+          };
+          if (item.photoBlob) {
+            reader.readAsDataURL(item.photoBlob);
+          } else {
+            resolve({ ...item, photoBase64: null });
+          }
+        });
+      }));
+
+      const blob = new Blob([JSON.stringify(exportItems, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `malnutrition_training_data_${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export failed', err);
+      alert('Export failed. Check console for details.');
+    }
+  };
+
+  const handleClearTrainingData = async () => {
+    if (window.confirm('Are you sure you want to delete all stored training data from this device? This action cannot be undone.')) {
+      try {
+        await clearFeedback();
+        alert('Training data deleted successfully.');
+      } catch (err) {
+        console.error('Clear failed', err);
+        alert('Failed to delete training data.');
+      }
+    }
+  };
+
   return (
     <div className="p-4 md:p-8 relative">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
@@ -108,6 +162,19 @@ export default function Reports() {
           <p className="text-xs text-[#5F5E5A] mt-3">Click on any metric row to download a detailed PDF report across all workers.</p>
         </div>
       )}
+
+      <div className="mt-8 bg-white rounded-2xl p-6 shadow-sm border border-[#D3D1C7]">
+        <h3 className="text-lg font-bold text-[#1A1A18] mb-2">AI Training Data (On-Device)</h3>
+        <p className="text-sm text-[#5F5E5A] mb-4">Export consented malnutrition photos and corrected labels for model retraining. Data is stored locally on this device.</p>
+        <div className="flex gap-4">
+          <button onClick={handleExportTrainingData} className="bg-[#085041] text-white px-4 py-2 rounded-xl font-medium flex items-center gap-2 hover:bg-[#1D9E75] transition-colors">
+            <span className="material-symbols-outlined text-[18px]">download</span> Export Training JSON
+          </button>
+          <button onClick={handleClearTrainingData} className="bg-white border border-[#E24B4A] text-[#E24B4A] px-4 py-2 rounded-xl font-medium flex items-center gap-2 hover:bg-[#FCEBEB] transition-colors">
+            <span className="material-symbols-outlined text-[18px]">delete</span> Clear Data
+          </button>
+        </div>
+      </div>
 
       {selectedMetric && (
         <AdminReportModal

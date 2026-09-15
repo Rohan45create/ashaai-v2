@@ -60,4 +60,46 @@ public class PregnancyController {
             return ResponseEntity.ok(pregnancyRepository.save(existing));
         }).orElse(ResponseEntity.notFound().build());
     }
+
+    /**
+     * GET /api/pregnancies/{id}/visit-history
+     * Returns ANC visit timeline for a pregnancy record.
+     * Used by PendingReview panel to display "Past Visits" accordion.
+     */
+    @GetMapping("/{id}/visit-history")
+    public ResponseEntity<VisitHistoryResponse> getVisitHistory(@PathVariable UUID id) {
+        return pregnancyRepository.findById(id).map(p -> {
+            VisitHistoryResponse resp = new VisitHistoryResponse(
+                p.getId().toString(),
+                p.getMotherMember() != null ? p.getMotherMember().getName() : null,
+                p.getLmp() != null ? p.getLmp().toString() : null,
+                p.getEdd() != null ? p.getEdd().toString() : null,
+                p.getAnc1Date() != null ? p.getAnc1Date().toString() : null,
+                p.getAnc2Date() != null ? p.getAnc2Date().toString() : null,
+                p.getAnc3Date() != null ? p.getAnc3Date().toString() : null,
+                p.getAnc4Date() != null ? p.getAnc4Date().toString() : null,
+                p.getLastAncDate() != null ? p.getLastAncDate().toString() : null,
+                Boolean.TRUE.equals(p.getHighRiskFlag()),
+                p.getHighRiskReasons(),
+                p.getStatus()
+            );
+            return ResponseEntity.ok(resp);
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
+    /** Safe projection for visit history — no sensitive identity data */
+    public record VisitHistoryResponse(
+        String pregnancyId,
+        String motherName,
+        String lmp,
+        String edd,
+        String anc1Date,
+        String anc2Date,
+        String anc3Date,
+        String anc4Date,
+        String lastAncDate,
+        boolean highRisk,
+        java.util.List<String> highRiskReasons,
+        String status
+    ) {}
 }

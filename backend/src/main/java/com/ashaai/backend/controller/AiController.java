@@ -77,12 +77,16 @@ public class AiController {
     @PostMapping(value = {"/api/ai/vision/muac", "/api/vision/muac-grade"}, consumes = "multipart/form-data")
     public ResponseEntity<String> processMuacPhoto(
             @RequestParam(value = "image", required = false) MultipartFile image,
-            @RequestParam(value = "photo", required = false) MultipartFile photo) {
+            @RequestParam(value = "photo", required = false) MultipartFile photo,
+            @RequestParam(value = "age", required = false) String age,
+            @RequestParam(value = "gender", required = false) String gender,
+            @RequestParam(value = "height", required = false) String height,
+            @RequestParam(value = "weight", required = false) String weight) {
         MultipartFile file = image != null ? image : photo;
         if (file == null) {
             return ResponseEntity.badRequest().body("{\"error\":\"IMAGE_REQUIRED\",\"message\":\"Image or photo file must be provided\"}");
         }
-        return ResponseEntity.ok(aiIntegrationService.gradeMuacPhoto(file));
+        return ResponseEntity.ok(aiIntegrationService.gradeMuacPhoto(file, age, gender, height, weight));
     }
 
     // Register OCR Extraction (Section 2.6)

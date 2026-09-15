@@ -10,7 +10,8 @@ import { useLanguageStore } from '../../stores/languageStore';
 
 import { 
   Home as HouseIcon, User, Baby, Syringe, Heart, Stethoscope, ClipboardList, Microscope,
-  Eye, Hand, Pill, Bandage, Users, MapPin, Droplet, Shield, LineChart, Leaf
+  Eye, Hand, Pill, Bandage, Users, MapPin, Droplet, Shield, LineChart, Leaf,
+  Activity, Thermometer, BookOpen, Brain, Star, Globe
 } from 'lucide-react';
 
 const SURVEY_ICON_MAP = {
@@ -33,8 +34,37 @@ const SURVEY_ICON_MAP = {
   water: <Droplet className="w-6 h-6" />,
   shield: <Shield className="w-6 h-6" />,
   chart: <LineChart className="w-6 h-6" />,
-  leaf: <Leaf className="w-6 h-6" />
+  leaf: <Leaf className="w-6 h-6" />,
+  activity: <Activity className="w-6 h-6" />,
+  thermometer: <Thermometer className="w-6 h-6" />,
+  book: <BookOpen className="w-6 h-6" />,
+  brain: <Brain className="w-6 h-6" />,
+  star: <Star className="w-6 h-6" />,
+  globe: <Globe className="w-6 h-6" />,
 };
+
+// Map a moduleKey to the display color for the module tile background
+const MODULE_COLOR_MAP = {
+  family_survey:         'bg-[#EAF3DE] text-[#085041]',
+  anc:                   'bg-[#FCEBEB] text-[#791F1F]',
+  child_growth:          'bg-[#FFF3E0] text-[#E65100]',
+  vaccination:           'bg-[#E3F2FD] text-[#1565C0]',
+  birth_record:          'bg-[#E8F5E9] text-[#2E7D32]',
+  death_record:          'bg-[#EFEBE9] text-[#4E342E]',
+  disease_surveillance:  'bg-[#F3E5F5] text-[#6A1B9A]',
+  ncd_tracking:          'bg-[#FBE9E7] text-[#BF360C]',
+  family_planning:       'bg-[#E1F5FE] text-[#01579B]',
+  elderly_care:          'bg-[#FFF8E1] text-[#F57F17]',
+  sanitation:            'bg-[#E0F7FA] text-[#006064]',
+  village_health:        'bg-[#F1F8E9] text-[#33691E]',
+};
+
+// family_survey has its own full-screen route; all others go through DynamicSurvey
+function getTemplatePath(template) {
+  if (template.moduleKey === 'family_survey') return '/asha/family-survey';
+  if (template.moduleKey) return `/asha/dynamic-survey?id=${template.moduleKey}`;
+  return `/asha/dynamic-survey?id=${template.id}`;
+}
 
 export default React.memo(function Home() {
   const { t } = useTranslation();
@@ -51,7 +81,8 @@ export default React.memo(function Home() {
   const [priorityError, setPriorityError] = useState('');
   const [priorityList, setPriorityList] = useState([]);
 
-  const [customSurveys, setCustomSurveys] = useState([]);
+  // Unified: all survey templates from DB (built-in + custom), filtered by is_active
+  const [allTemplates, setAllTemplates] = useState([]);
 
   const [activityStats, setActivityStats] = useState({
     familiesToday: 0, surveysToday: 0, childrenToday: 0,
@@ -191,6 +222,7 @@ export default React.memo(function Home() {
     return () => { isUnmounted = true; };
   }, [docId]);
 
+  // Load all survey templates (built-in + custom) from the API
   useEffect(() => {
     if (!docId) return;
     let isUnmounted = false;
@@ -198,11 +230,12 @@ export default React.memo(function Home() {
       try {
         const data = await apiFetch('/api/surveyTemplates');
         if (!isUnmounted && Array.isArray(data)) {
-          // Filter out core modules that are already rendered above
-          setCustomSurveys(data.filter(s => !s.moduleKey));
+          // Filter out inactive templates (is_active field from V5 schema)
+          // Templates without is_active field (older rows) are treated as active
+          setAllTemplates(data.filter(t => t.isActive !== false));
         }
       } catch (err) {
-        console.error(err);
+        console.error('[Home] Templates load error:', err);
       }
     };
     fetchTemplates();
@@ -246,21 +279,7 @@ export default React.memo(function Home() {
     }
   };
 
-  const modules = [
-    { title: t('family_survey'), path: '/asha/family-survey', icon: 'family_home', color: 'bg-[#EAF3DE] text-[#085041]', available: true },
-    { title: t('anc_registration'), path: '/asha/anc', icon: 'pregnant_woman', color: 'bg-[#FCEBEB] text-[#791F1F]', available: true },
-    { title: t('child_growth'), path: '/asha/dynamic-survey?id=child_growth', icon: 'child_care', color: 'bg-[#FFF3E0] text-[#E65100]', available: true },
-    { title: t('vaccination'), path: '/asha/vaccination', icon: 'vaccines', color: 'bg-[#E3F2FD] text-[#1565C0]', available: true },
-    { title: t('birth_record'), path: '/asha/birth-record', icon: 'crib', color: 'bg-[#E8F5E9] text-[#2E7D32]', available: true },
-    { title: t('death_record'), path: '/asha/death-record', icon: 'demography', color: 'bg-[#EFEBE9] text-[#4E342E]', available: true },
-    { title: t('disease_surveillance'), path: '/asha/disease-surveillance', icon: 'coronavirus', color: 'bg-[#F3E5F5] text-[#6A1B9A]', available: true },
-    { title: t('ncd_tracking'), path: '/asha/ncd-tracking', icon: 'monitor_heart', color: 'bg-[#FBE9E7] text-[#BF360C]', available: true },
-    { title: t('family_planning'), path: '/asha/family-planning', icon: 'diversity_3', color: 'bg-[#E1F5FE] text-[#01579B]', available: true },
-    { title: t('elderly_care'), path: '/asha/elderly-care', icon: 'elderly', color: 'bg-[#FFF8E1] text-[#F57F17]', available: true },
-    { title: t('sanitation'), path: '/asha/sanitation', icon: 'water_drop', color: 'bg-[#E0F7FA] text-[#006064]', available: true },
-    { title: t('village_health'), path: '/asha/village-health', icon: 'location_city', color: 'bg-[#F1F8E9] text-[#33691E]', available: true },
-  ];
-
+  // No longer needed — replaced by getTemplatePath above
   const getModuleRoute = (moduleType) => {
     const map = {
       'family_survey': 'family-survey',
@@ -279,9 +298,29 @@ export default React.memo(function Home() {
     return map[moduleType] || moduleType;
   };
 
+  // Pre-compute module lookup for renderSurveyRow (uses allTemplates now)
+  const moduleLookup = useMemo(() => {
+    const map = {};
+    allTemplates.forEach(t => {
+      const path = getTemplatePath(t);
+      const color = MODULE_COLOR_MAP[t.moduleKey] || 'bg-[#F3E5F5] text-[#6A1B9A]';
+      const icon = t.icon || 'clipboard';
+      const title = language === 'mr' && t.nameMr ? t.nameMr
+                  : language === 'hi' && t.nameHi ? t.nameHi
+                  : t.nameEn || t.moduleKey || 'Survey';
+      if (t.moduleKey) map[t.moduleKey] = { title, path, icon, color };
+    });
+    return map;
+  }, [allTemplates, language]);
+
   const renderSurveyRow = (sub) => {
-    const pathPart = getModuleRoute(sub.moduleType);
-    const moduleDef = modules.find(m => m.path.includes(pathPart)) || { title: sub.moduleType, icon: 'article', color: 'bg-gray-100 text-gray-600', path: `/asha/${pathPart}` };
+    const modKey = sub.moduleType;
+    const modDef = moduleLookup[modKey] || {
+      title: sub.moduleType,
+      icon: 'clipboard',
+      color: 'bg-gray-100 text-gray-600',
+      path: `/asha/dynamic-survey?id=${modKey || sub.id}`,
+    };
     // submittedAt is an ISO string from REST — use plain JS Date
     const displayDate = sub.submittedAt ? new Date(sub.submittedAt).toLocaleDateString() : 'N/A';
     const nameToShow = sub.familyName || sub.householdId || 'Unknown Family';
@@ -290,7 +329,7 @@ export default React.memo(function Home() {
       <div 
         key={sub.id} 
         onClick={() => {
-          navigate(moduleDef.path, {
+          navigate(modDef.path, {
             state: {
               submissionId: sub.id,
               submissionData: sub.data || sub,
@@ -302,11 +341,13 @@ export default React.memo(function Home() {
         className="flex items-center justify-between p-3 bg-white rounded-xl shadow-sm border border-[#D3D1C7] active:scale-[0.98] transition-transform cursor-pointer"
       >
         <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${moduleDef.color}`}>
-             <span className="material-symbols-outlined text-lg">{moduleDef.icon}</span>
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${modDef.color}`}>
+            {SURVEY_ICON_MAP[modDef.icon]
+              ? <span className="w-5 h-5">{SURVEY_ICON_MAP[modDef.icon]}</span>
+              : <span className="material-symbols-outlined text-lg">{modDef.icon}</span>}
           </div>
           <div>
-             <h3 className="text-sm font-bold text-[#1A1A18]">{moduleDef.title}</h3>
+             <h3 className="text-sm font-bold text-[#1A1A18]">{modDef.title}</h3>
              <p className="text-xs text-[#5F5E5A]">{nameToShow}</p>
              <p className="text-[10px] text-gray-400 mt-0.5">{displayDate}</p>
           </div>
@@ -416,41 +457,32 @@ export default React.memo(function Home() {
           </div>
         </Link>
 
-        {/* Module Grid */}
+        {/* Module Grid — unified: built-in + custom, all from DB, filtered by is_active */}
         <div className="grid grid-cols-3 gap-3">
-          {modules.map(mod => {
-            if (!mod.available) {
-              return (
-                <div key={mod.path} className="bg-gray-100 p-3 rounded-2xl shadow-sm border border-gray-200 flex flex-col items-center justify-center text-center opacity-60 cursor-not-allowed">
-                  <div className={`w-11 h-11 rounded-full mb-2 flex items-center justify-center bg-gray-200 text-gray-400`}>
-                    <span className="material-symbols-outlined text-xl">{mod.icon}</span>
-                  </div>
-                  <span className="text-[11px] font-semibold text-gray-500 leading-tight">{mod.title}</span>
-                  <span className="text-[8px] text-gray-400 mt-1 uppercase font-bold">Coming Soon</span>
-                </div>
-              );
-            }
+          {allTemplates.map(template => {
+            const path = getTemplatePath(template);
+            const color = MODULE_COLOR_MAP[template.moduleKey] || 'bg-[#F3E5F5] text-[#6A1B9A]';
+            const iconEl = SURVEY_ICON_MAP[template.icon] || SURVEY_ICON_MAP['clipboard'];
+            const displayTitle = language === 'mr' && template.nameMr ? template.nameMr
+                               : language === 'hi' && template.nameHi ? template.nameHi
+                               : template.nameEn || template.moduleKey || 'Survey';
             return (
-              <Link key={mod.path} to={mod.path} className="bg-white p-3 rounded-2xl shadow-sm border border-[#D3D1C7] flex flex-col items-center justify-center text-center hover:shadow-md transition-shadow active:scale-[0.98]">
-                <div className={`w-11 h-11 rounded-full mb-2 flex items-center justify-center ${mod.color}`}>
-                  <span className="material-symbols-outlined text-xl">{mod.icon}</span>
+              <Link
+                key={template.id || template.moduleKey}
+                to={path}
+                className="relative bg-white p-3 rounded-2xl shadow-sm border border-[#D3D1C7] flex flex-col items-center justify-center text-center hover:shadow-md transition-shadow active:scale-[0.98]"
+              >
+                <div className={`w-11 h-11 rounded-full mb-2 flex items-center justify-center ${color}`}>
+                  {iconEl}
                 </div>
-                <span className="text-[11px] font-semibold text-[#1A1A18] leading-tight">{mod.title}</span>
-              </Link>
-            );
-          })}
-          {customSurveys.map(survey => {
-            const displayTitle = language === 'mr' && survey.nameMr ? survey.nameMr :
-                                 language === 'hi' && survey.nameHi ? survey.nameHi : 
-                                 survey.nameEn;
-            return (
-              <Link key={survey.id} to={`/asha/dynamic-survey?id=${survey.id}`} className="relative bg-white p-3 rounded-2xl shadow-sm border border-[#D3D1C7] flex flex-col items-center justify-center text-center hover:shadow-md transition-shadow active:scale-[0.98]">
-                <div className="w-11 h-11 rounded-full mb-2 flex items-center justify-center bg-[#F3E5F5] text-[#6A1B9A]">
-                  {SURVEY_ICON_MAP[survey.iconName] || SURVEY_ICON_MAP['clipboard']}
-                </div>
-                <span className="text-[11px] font-semibold text-[#1A1A18] leading-tight truncate w-full">{displayTitle}</span>
-                {survey.hasLinkage && (
-                  <div className="absolute bottom-2 right-2 w-5 h-5 bg-[#EAF3DE] border border-[#1D9E75] rounded-full flex items-center justify-center" title="Links to another survey">
+                <span className="text-[11px] font-semibold text-[#1A1A18] leading-tight truncate w-full">
+                  {displayTitle}
+                </span>
+                {template.hasLinkage && (
+                  <div
+                    className="absolute bottom-2 right-2 w-5 h-5 bg-[#EAF3DE] border border-[#1D9E75] rounded-full flex items-center justify-center"
+                    title="Links to another survey"
+                  >
                     <span className="material-symbols-outlined text-[12px] text-[#085041]">link</span>
                   </div>
                 )}

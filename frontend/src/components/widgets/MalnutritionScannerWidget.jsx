@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { apiFetch } from '../../utils/api';
+import { saveFeedback } from '../../utils/feedbackDb';
 
 const GRADE_CONFIG = {
   NORMAL: {
@@ -38,6 +39,16 @@ export default function MalnutritionScannerWidget({ onGradeConfirmed, prefillDat
   const [gradeResult, setGradeResult] = useState(null);
   const [gradeConfirmed, setGradeConfirmed] = useState(false);
   const [referralSent, setReferralSent] = useState(false);
+  const [isCorrect, setIsCorrect] = useState(null);
+  const [correctedGrade, setCorrectedGrade] = useState('');
+  const [consentGiven, setConsentGiven] = useState(null);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+
+  // Manual Input fields
+  const [age, setAge] = useState(prefillData?.age_months || prefillData?.age || '');
+  const [gender, setGender] = useState(prefillData?.gender || '');
+  const [height, setHeight] = useState(prefillData?.height_cm || prefillData?.current_height_cm || '');
+  const [weight, setWeight] = useState(prefillData?.weight_kg || prefillData?.current_weight_kg || '');
   
   const fileInputRef = useRef();
 
@@ -48,6 +59,10 @@ export default function MalnutritionScannerWidget({ onGradeConfirmed, prefillDat
       setPreview(URL.createObjectURL(file));
       setGradeResult(null);
       setReferralSent(false);
+      setIsCorrect(null);
+      setCorrectedGrade('');
+      setConsentGiven(null);
+      setFeedbackSubmitted(false);
     }
   };
 
@@ -57,6 +72,10 @@ export default function MalnutritionScannerWidget({ onGradeConfirmed, prefillDat
     setGradeResult(null);
     setGradeConfirmed(false);
     setReferralSent(false);
+    setIsCorrect(null);
+    setCorrectedGrade('');
+    setConsentGiven(null);
+    setFeedbackSubmitted(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -66,6 +85,11 @@ export default function MalnutritionScannerWidget({ onGradeConfirmed, prefillDat
     try {
       const formData = new FormData();
       formData.append('photo', photo);
+      
+      if (age) formData.append('age', age);
+      if (gender) formData.append('gender', gender);
+      if (height) formData.append('height', height);
+      if (weight) formData.append('weight', weight);
 
       const data = await apiFetch('/api/vision/muac-grade', {
         method: 'POST',
@@ -101,7 +125,8 @@ export default function MalnutritionScannerWidget({ onGradeConfirmed, prefillDat
     }
   };
 
-  const cfg = gradeResult?.grade ? (GRADE_CONFIG[gradeResult.grade] || GRADE_CONFIG.NORMAL) : null;
+  const displayGrade = correctedGrade || gradeResult?.grade;
+  const cfg = displayGrade ? (GRADE_CONFIG[displayGrade] || GRADE_CONFIG.NORMAL) : null;
 
   return (
     <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#D3D1C7] space-y-4 mb-4">
@@ -168,36 +193,75 @@ export default function MalnutritionScannerWidget({ onGradeConfirmed, prefillDat
                 </div>
               )}
 
-              {gradeConfirmed ? (
+              {!feedbackSubmitted ? (
+                <div style={{ marginTop: '14px', borderTop: '1px solid #E8E7E0', paddingTop: '14px' }}>
+                  {isCorrect === null && (
+                    <div>
+                      <p style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A18', marginBottom: '8px' }}>Was this AI prediction correct?</p>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button type="button" onClick={() => setIsCorrect(true)} style={{ flex: 1, padding: '10px', background: '#fff', border: '1px solid #D3D1C7', borderRadius: '8px', fontSize: '13px', fontWeight: '600', color: '#1A1A18', cursor: 'pointer' }}>Yes</button>
+                        <button type="button" onClick={() => setIsCorrect(false)} style={{ flex: 1, padding: '10px', background: '#fff', border: '1px solid #D3D1C7', borderRadius: '8px', fontSize: '13px', fontWeight: '600', color: '#1A1A18', cursor: 'pointer' }}>No</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {isCorrect === false && !correctedGrade && (
+                    <div style={{ marginTop: '10px' }}>
+                      <p style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A18', marginBottom: '8px' }}>Please select the correct grade:</p>
+                      <div style={{ display: 'flex', gap: '6px', flexDirection: 'column' }}>
+                        <button type="button" onClick={() => setCorrectedGrade('NORMAL')} style={{ padding: '10px', background: '#fff', border: '1px solid #1D9E75', borderRadius: '8px', fontSize: '13px', fontWeight: '600', color: '#085041', cursor: 'pointer' }}>Normal (Green)</button>
+                        <button type="button" onClick={() => setCorrectedGrade('YELLOW')} style={{ padding: '10px', background: '#fff', border: '1px solid #F0A500', borderRadius: '8px', fontSize: '13px', fontWeight: '600', color: '#7A5500', cursor: 'pointer' }}>Moderate / MAM (Yellow)</button>
+                        <button type="button" onClick={() => setCorrectedGrade('RED')} style={{ padding: '10px', background: '#fff', border: '1px solid #E24B4A', borderRadius: '8px', fontSize: '13px', fontWeight: '600', color: '#791F1F', cursor: 'pointer' }}>Severe / SAM (Red)</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {(isCorrect === true || correctedGrade) && consentGiven === null && (
+                    <div style={{ marginTop: '10px', padding: '12px', background: '#F9F9F8', borderRadius: '8px', border: '1px solid #E8E7E0' }}>
+                      <p style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A18', marginBottom: '4px' }}>Use this photo to help improve the model?</p>
+                      <p style={{ fontSize: '11px', color: '#5F5E5A', marginBottom: '10px' }}>It will be deleted after training, never stored otherwise.</p>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button type="button" onClick={() => setConsentGiven(true)} style={{ flex: 1, padding: '10px', background: '#085041', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', color: '#fff', cursor: 'pointer' }}>Yes, Use for Training</button>
+                        <button type="button" onClick={() => setConsentGiven(false)} style={{ flex: 1, padding: '10px', background: '#fff', border: '1px solid #D3D1C7', borderRadius: '8px', fontSize: '13px', fontWeight: '600', color: '#1A1A18', cursor: 'pointer' }}>No, Do Not Use</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {consentGiven !== null && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const finalGrade = isCorrect ? gradeResult.grade : correctedGrade;
+                        await saveFeedback(photo, gradeResult.grade, finalGrade, consentGiven);
+                        setFeedbackSubmitted(true);
+                        setGradeConfirmed(true);
+                        if (gradeResult && onGradeConfirmed) {
+                          onGradeConfirmed({
+                            malnutritionGrade: finalGrade,
+                            muac_color: finalGrade === 'RED' ? 'RED' : finalGrade === 'YELLOW' ? 'YELLOW' : 'GREEN',
+                            muac_cm: gradeResult.muac_mm ? (gradeResult.muac_mm / 10).toFixed(1) : undefined
+                          });
+                        }
+                      }}
+                      style={{
+                        marginTop: '14px', width: '100%', padding: '12px 16px',
+                        background: cfg.badgeBg, color: '#fff',
+                        border: 'none', borderRadius: '12px', fontWeight: '700',
+                        fontSize: '14px', cursor: 'pointer', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', gap: '8px',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+                      }}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">how_to_reg</span>
+                      Confirm & Apply Grade to Record
+                    </button>
+                  )}
+                </div>
+              ) : (
                 <div style={{ marginTop: '14px', background: '#EAF3DE', border: '1.5px solid #1D9E75', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '8px', color: '#085041', fontWeight: '700', fontSize: '13px' }}>
                   <span className="material-symbols-outlined text-[20px]">verified</span>
                   Grade Confirmed by ASHA — Applied to Record
                 </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setGradeConfirmed(true);
-                    if (gradeResult && onGradeConfirmed) {
-                      onGradeConfirmed({
-                        malnutritionGrade: gradeResult.grade,
-                        muac_color: gradeResult.grade === 'RED' ? 'RED' : gradeResult.grade === 'YELLOW' ? 'YELLOW' : 'GREEN',
-                        muac_cm: gradeResult.muac_mm ? (gradeResult.muac_mm / 10).toFixed(1) : undefined
-                      });
-                    }
-                  }}
-                  style={{
-                    marginTop: '14px', width: '100%', padding: '12px 16px',
-                    background: cfg.badgeBg, color: '#fff',
-                    border: 'none', borderRadius: '12px', fontWeight: '700',
-                    fontSize: '14px', cursor: 'pointer', display: 'flex',
-                    alignItems: 'center', justifyContent: 'center', gap: '8px',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
-                  }}
-                >
-                  <span className="material-symbols-outlined text-[18px]">how_to_reg</span>
-                  Confirm & Apply Grade to Record
-                </button>
               )}
 
               <button type="button" onClick={clearPhoto} style={{ marginTop: '14px', fontSize: '12px', fontWeight: '600', color: cfg.text, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
@@ -243,6 +307,33 @@ export default function MalnutritionScannerWidget({ onGradeConfirmed, prefillDat
               <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>close</span>
             </button>
           </div>
+          
+          <div style={{ marginTop: '12px', padding: '12px', background: '#F9F9F8', borderRadius: '12px', border: '1px solid #D3D1C7' }}>
+            <p style={{ fontSize: '12px', fontWeight: '600', color: '#5F5E5A', marginBottom: '8px' }}>Optional: Verify measurements to improve accuracy</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              <div>
+                <label style={{ fontSize: '11px', color: '#5F5E5A', display: 'block', marginBottom: '2px' }}>Age (months)</label>
+                <input type="number" value={age} onChange={(e) => setAge(e.target.value)} placeholder="Age" style={{ width: '100%', padding: '8px', border: '1px solid #D3D1C7', borderRadius: '8px', fontSize: '13px' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', color: '#5F5E5A', display: 'block', marginBottom: '2px' }}>Gender</label>
+                <select value={gender} onChange={(e) => setGender(e.target.value)} style={{ width: '100%', padding: '8px', border: '1px solid #D3D1C7', borderRadius: '8px', fontSize: '13px', background: 'white' }}>
+                  <option value="">Select...</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', color: '#5F5E5A', display: 'block', marginBottom: '2px' }}>Height (cm)</label>
+                <input type="number" step="0.1" value={height} onChange={(e) => setHeight(e.target.value)} placeholder="e.g. 72.5" style={{ width: '100%', padding: '8px', border: '1px solid #D3D1C7', borderRadius: '8px', fontSize: '13px' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: '11px', color: '#5F5E5A', display: 'block', marginBottom: '2px' }}>Weight (kg)</label>
+                <input type="number" step="0.1" value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="e.g. 8.5" style={{ width: '100%', padding: '8px', border: '1px solid #D3D1C7', borderRadius: '8px', fontSize: '13px' }} />
+              </div>
+            </div>
+          </div>
+
           <button
             type="button"
             onClick={handleGrade}

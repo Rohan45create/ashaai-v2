@@ -5,7 +5,19 @@ the frontend communicates through Spring Boot REST APIs.
 """
 
 from dotenv import load_dotenv
-load_dotenv()
+import pathlib as _pl
+
+# Strip UTF-8 BOM if present — Windows editors (Notepad, VS Code on Windows)
+# silently save .env with a BOM, which causes python-dotenv to parse the first
+# key as '\ufeffGEMINI_API_KEY' instead of 'GEMINI_API_KEY', so os.getenv()
+# returns None even when the file looks correct.
+_env_path = _pl.Path(__file__).parent / ".env"
+if _env_path.exists():
+    _raw = _env_path.read_bytes()
+    if _raw.startswith(b"\xef\xbb\xbf"):
+        _env_path.write_bytes(_raw[3:])
+
+load_dotenv(override=True)
 
 from fastapi import FastAPI
 from routers import voice, vision, register, ambient, text_features, agent

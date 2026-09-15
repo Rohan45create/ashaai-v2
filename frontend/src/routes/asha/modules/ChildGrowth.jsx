@@ -6,6 +6,7 @@ import AmbientToggle from '../../../components/AmbientToggle';
 import AadhaarAutofill from '../../../components/AadhaarAutofill';
 import { useTranslation } from 'react-i18next';
 import AadhaarLinkagePopup from '../../../components/AadhaarLinkagePopup';
+import MalnutritionScannerWidget from '../../../components/widgets/MalnutritionScannerWidget';
 import { apiFetch } from '../../../utils/api';
 
 const FIELDS = [
@@ -198,203 +199,20 @@ export default function ChildGrowth() {
     }
   };
 
-  const cfg = gradeResult?.grade ? (GRADE_CONFIG[gradeResult.grade] || GRADE_CONFIG.NORMAL) : null;
-
   return (
     <div className="space-y-4">
-      {/* â”€â”€ AI Malnutrition Scan Card â”€â”€ */}
-      <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#D3D1C7] space-y-4">
-        <div className="flex items-center space-x-3 mb-2">
-          <div className="w-10 h-10 bg-[#FCEBEB] rounded-full flex items-center justify-center text-[#791F1F]">
-            <span className="material-symbols-outlined text-xl">vital_signs</span>
-          </div>
-          <div>
-            <h3 className="font-bold text-[#1A1A18]">AI Malnutrition Scan</h3>
-            <p className="text-xs text-[#5F5E5A]">Take a photo of the child â€” Gemini will assess malnutrition risk</p>
-          </div>
-        </div>
-
-        {/* â”€â”€ Result State â”€â”€ */}
-        {gradeResult ? (
-          <div>
-            {gradeResult.error ? (
-              <div style={{ background: '#FCEBEB', border: '1px solid #E24B4A', borderRadius: '14px', padding: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#791F1F', fontWeight: '700' }}>
-                  <span className="material-symbols-outlined">error</span>
-                  Analysis Failed
-                </div>
-                <p style={{ fontSize: '13px', color: '#791F1F', marginTop: '6px' }}>{gradeResult.explanation || 'Could not analyze the photo. Please try again with a clear image.'}</p>
-                <button onClick={clearPhoto} className="mt-3 text-xs underline font-medium text-[#791F1F]">Try Again</button>
-              </div>
-            ) : (
-              <div style={{ background: cfg.bg, border: `1.5px solid ${cfg.border}`, borderRadius: '16px', padding: '18px' }}>
-                {/* Grade badge + label */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                  <div style={{ background: cfg.badgeBg, borderRadius: '50%', width: '38px', height: '38px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: '20px' }}>{cfg.icon}</span>
-                  </div>
-                  <div>
-                    <p style={{ fontSize: '11px', fontWeight: '600', color: cfg.text, opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.05em' }}>AI Assessment</p>
-                    <h4 style={{ fontSize: '17px', fontWeight: '800', color: cfg.text }}>{gradeResult.severity_label || cfg.label}</h4>
-                  </div>
-                </div>
-
-                {/* Confidence bar */}
-                <ConfidenceBar value={gradeResult.confidence ?? 0} />
-
-                {/* Explanation */}
-                {gradeResult.explanation && (
-                  <p style={{ fontSize: '13px', color: cfg.text, marginTop: '12px', lineHeight: '1.55' }}>
-                    {gradeResult.explanation}
-                  </p>
-                )}
-
-                {/* Visible Signs */}
-                {gradeResult.visible_signs && gradeResult.visible_signs.length > 0 && (
-                  <div style={{ marginTop: '12px' }}>
-                    <p style={{ fontSize: '11px', fontWeight: '700', color: cfg.text, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Observed Signs</p>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {gradeResult.visible_signs.map((sign, i) => (
-                        <span key={i} style={{ background: 'rgba(0,0,0,0.08)', borderRadius: '20px', padding: '3px 10px', fontSize: '12px', color: cfg.text, fontWeight: '500' }}>
-                          {sign}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Recommendation */}
-                {gradeResult.recommendation && (
-                  <div style={{ marginTop: '12px', background: 'rgba(0,0,0,0.06)', borderRadius: '10px', padding: '10px 12px' }}>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                      <span className="material-symbols-outlined" style={{ fontSize: '16px', color: cfg.text, marginTop: '1px', flexShrink: 0 }}>medical_services</span>
-                      <p style={{ fontSize: '13px', color: cfg.text, fontWeight: '500', lineHeight: '1.5' }}>{gradeResult.recommendation}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Explicit Human Confirmation Gate (Section 2.3: ASHA confirms before save) */}
-                {gradeConfirmed ? (
-                  <div style={{ marginTop: '14px', background: '#EAF3DE', border: '1.5px solid #1D9E75', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '8px', color: '#085041', fontWeight: '700', fontSize: '13px' }}>
-                    <span className="material-symbols-outlined text-[20px]">verified</span>
-                    Grade Confirmed by ASHA — Applied to Record
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setGradeConfirmed(true);
-                      if (gradeResult) {
-                        setPrefillData(prev => ({
-                          ...prev,
-                          malnutritionGrade: gradeResult.grade,
-                          muac_color: gradeResult.grade === 'RED' ? 'RED' : gradeResult.grade === 'YELLOW' ? 'YELLOW' : 'GREEN',
-                          muac_cm: gradeResult.muac_mm ? (gradeResult.muac_mm / 10).toFixed(1) : prev?.muac_cm
-                        }));
-                      }
-                    }}
-                    style={{
-                      marginTop: '14px', width: '100%', padding: '12px 16px',
-                      background: cfg.badgeBg, color: '#fff',
-                      border: 'none', borderRadius: '12px', fontWeight: '700',
-                      fontSize: '14px', cursor: 'pointer', display: 'flex',
-                      alignItems: 'center', justifyContent: 'center', gap: '8px',
-                      boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
-                    }}
-                  >
-                    <span className="material-symbols-outlined text-[18px]">how_to_reg</span>
-                    Confirm & Apply Grade to Record
-                  </button>
-                )}
-
-                {/* Scan Again button */}
-                <button onClick={clearPhoto} style={{ marginTop: '14px', fontSize: '12px', fontWeight: '600', color: cfg.text, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                  Scan Again
-                </button>
-
-                {/* NRC Referral button for SAM */}
-                {(gradeResult.grade === 'RED' || gradeResult.needs_nrc_referral) && (
-                  <div style={{ marginTop: '14px' }}>
-                    {referralSent ? (
-                      <div style={{ background: '#085041', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: '20px' }}>check_circle</span>
-                        <p style={{ color: '#fff', fontWeight: '700', fontSize: '14px' }}>NRC Referral Sent â€” Admin Notified</p>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={handleGenerateReferral}
-                        style={{
-                          width: '100%', padding: '14px', background: '#E24B4A', color: '#fff',
-                          borderRadius: '14px', border: 'none', fontWeight: '800', fontSize: '14px',
-                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          gap: '8px', boxShadow: '0 4px 14px rgba(226,75,74,0.35)', transition: 'opacity 0.15s',
-                        }}
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>local_hospital</span>
-                        Generate NRC Referral
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        ) : preview ? (
-          /* â”€â”€ Preview State â”€â”€ */
-          <div>
-            <div style={{ position: 'relative' }}>
-              <img src={preview} alt="Child" style={{ width: '100%', height: '220px', objectFit: 'cover', borderRadius: '14px', border: '1px solid #D3D1C7' }} />
-              <button
-                onClick={clearPhoto}
-                style={{ position: 'absolute', top: '10px', right: '10px', background: 'white', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.2)', cursor: 'pointer', color: '#E24B4A' }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>close</span>
-              </button>
-            </div>
-            <button
-              onClick={handleGrade}
-              disabled={loading}
-              style={{
-                marginTop: '12px', width: '100%', padding: '14px', background: loading ? '#7FB4AC' : '#085041',
-                color: '#fff', borderRadius: '14px', border: 'none', fontWeight: '700', fontSize: '14px',
-                cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', gap: '8px', transition: 'background 0.2s',
-              }}
-            >
-              {loading ? (
-                <>
-                  <span className="material-symbols-outlined" style={{ fontSize: '20px', animation: 'spin 1s linear infinite' }}>refresh</span>
-                  Analyzing with AIâ€¦
-                </>
-              ) : (
-                <>
-                  <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>biotech</span>
-                  Analyze for Malnutrition
-                </>
-              )}
-            </button>
-            <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
-          </div>
-        ) : (
-          /* â”€â”€ Upload State â”€â”€ */
-          <div
-            onClick={() => fileInputRef.current.click()}
-            style={{
-              border: '2px dashed #1D9E75', borderRadius: '14px', padding: '32px 20px',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              textAlign: 'center', cursor: 'pointer', transition: 'background 0.2s',
-            }}
-            onMouseEnter={e => e.currentTarget.style.background = '#EAF3DE'}
-            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: '40px', color: '#1D9E75', marginBottom: '8px' }}>add_a_photo</span>
-            <p style={{ fontWeight: '700', color: '#085041', fontSize: '14px' }}>Tap to photograph the child</p>
-            <p style={{ fontSize: '12px', color: '#5F5E5A', marginTop: '4px' }}>Gemini AI will assess malnutrition risk visually</p>
-          </div>
-        )}
-
-        <input type="file" accept="image/*" capture="environment" ref={fileInputRef} onChange={handleCapture} className="hidden" />
-      </div>
+      {/* ── AI Malnutrition Scan Card ── */}
+      <MalnutritionScannerWidget
+        prefillData={prefillData}
+        onGradeConfirmed={(payload) => {
+          setPrefillData((prev) => ({
+            ...prev,
+            malnutritionGrade: payload.malnutritionGrade,
+            muac_color: payload.muac_color,
+            muac_cm: payload.muac_cm || prev?.muac_cm
+          }));
+        }}
+      />
 
       {/* â”€â”€ Orphan Toggle â”€â”€ */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#D3D1C7]">

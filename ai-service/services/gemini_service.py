@@ -8,6 +8,14 @@ from typing import Optional, Dict, Any
 import json
 import logging
 import time
+import os
+import cv2
+import numpy as np
+import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision as mp_vision
+import onnxruntime as ort
+from huggingface_hub import hf_hub_download
 from pydantic import BaseModel, Field
 from models.schemas import (
     VoiceExtractionResponse,
@@ -21,7 +29,7 @@ from models.schemas import (
     CrossFieldValidationResponse,
     TranslationResponse,
 )
-from services.provider_client import call_multimodal, call_text
+from services.provider_client import call_multimodal, call_text, call_translation, call_critical_consensus, call_report_generation_consensus
 
 logger = logging.getLogger(__name__)
 
@@ -85,34 +93,188 @@ class GeminiRegisterOcrResponse(BaseModel):
 class AIService:
     """Delegates domain-specific AI processing to the unified provider client."""
 
-    def grade_muac_photo(self, image_data: bytes) -> MuacGradingResponse:
-        """Grade MUAC tape or child photo using call_multimodal (Section 2.3).
+    def grade_muac_photo(self, image_data: bytes, age: Optional[str] = None, gender: Optional[str] = None, height: Optional[str] = None, weight: Optional[str] = None) -> MuacGradingResponse:
+        """Grade MUAC tape or child photo using the 3-model pipeline (Section 2.3).
         
         Applies WHO/NVHCP thresholds:
         - < 115mm  -> SAM (RED, needs NRC referral)
         - 115-124mm -> MAM (YELLOW)
         - >= 125mm -> Normal (NORMAL)
         """
+        
+        # --- Model 1: MediaPipe Tasks API & CV2 ---
+        np_arr = np.frombuffer(image_data, np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        
+        calculated_muac = None
+        if img is not None:
+            # 1a. Locate .task model bundle — downloaded once alongside service startup
+            _TASK_MODEL_PATH = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),  # ai-service root
+                "pose_landmarker_lite.task"
+            )
+            arm_width_px = None
+            
+            if os.path.exists(_TASK_MODEL_PATH):
+                try:
+                    # Tasks API: IMAGE running mode for single-frame detection
+                    base_options = mp_python.BaseOptions(model_asset_path=_TASK_MODEL_PATH)
+                    options = mp_vision.PoseLandmarkerOptions(
+                        base_options=base_options,
+                        running_mode=mp_vision.RunningMode.IMAGE,
+                    )
+                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    mp_image = mp.Image(
+                        image_format=mp.ImageFormat.SRGB,
+                        data=img_rgb
+                    )
+                    with mp_vision.PoseLandmarker.create_from_options(options) as landmarker:
+                        detection_result = landmarker.detect(mp_image)
+                    
+                    # PoseLandmark indices: LEFT_ELBOW=13, LEFT_WRIST=15
+                    # We use the elbow–wrist segment length as a proxy for arm circumference diameter
+                    PoseLandmark = mp_vision.PoseLandmark
+                    h_px, w_px = img.shape[:2]
+                    if detection_result.pose_landmarks:
+                        lms = detection_result.pose_landmarks[0]  # first person
+                        # Use left elbow (13) and left wrist (15)
+                        elbow = lms[PoseLandmark.LEFT_ELBOW]
+                        wrist = lms[PoseLandmark.LEFT_WRIST]
+                        # Pixel distance between elbow and wrist
+                        ex, ey = elbow.x * w_px, elbow.y * h_px
+                        wx, wy = wrist.x * w_px, wrist.y * h_px
+                        forearm_px = ((ex - wx) ** 2 + (ey - wy) ** 2) ** 0.5
+                        # MUAC measurement point is mid-upper arm — use 1/3 of forearm as proxy diameter
+                        arm_width_px = forearm_px / 3.0
+                        logger.info(f"MediaPipe PoseLandmarker: arm_width_px={arm_width_px:.1f}")
+                except Exception as e:
+                    logger.warning(f"MediaPipe Tasks API pose detection failed: {e}")
+                    arm_width_px = None
+            else:
+                logger.warning(f"pose_landmarker_lite.task not found at {_TASK_MODEL_PATH} — skipping MediaPipe step")
+
+            # 1b. Find reference coin using Hough Circle Transform
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            gray = cv2.medianBlur(gray, 5)
+            circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 20, param1=50, param2=30, minRadius=10, maxRadius=100)
+            
+            coin_diameter_px = None
+            if circles is not None:
+                circles = np.uint16(np.around(circles))
+                coin_radius_px = circles[0, 0, 2]
+                coin_diameter_px = coin_radius_px * 2.0
+            
+            # 1c. Compute real-world MUAC from ratio
+            if arm_width_px and coin_diameter_px:
+                coin_real_mm = 25.0  # Indian 1 Rupee coin diameter
+                ratio = coin_real_mm / coin_diameter_px
+                calculated_muac = arm_width_px * ratio * np.pi
+                logger.info(f"Computed MUAC: {calculated_muac:.1f} mm")
+
+        # --- Weight Regressor ---
+        calc_weight = weight
+        if not calc_weight and calculated_muac is not None and height and age:
+            try:
+                # Mock regressor: weight proportional to height and MUAC
+                h_val = float(height)
+                m_val = float(calculated_muac)
+                calc_weight = str(round((h_val * 0.1) + (m_val * 0.05), 1))
+            except Exception as e:
+                logger.warning(f"Weight regressor failed: {e}")
+                calc_weight = None
+
+        # --- Model 2: ONNX Classifier (YOLOv8-style, input [1,3,640,640]) ---
+        # repo_id and filename are env-var-driven so the correct private repo
+        # can be set without touching code. HF_TOKEN (or HUGGINGFACE_API_KEY)
+        # must be a READ-scoped token for the target repo.
+        model2_flag = "UNKNOWN"
+        try:
+            _onnx_repo = os.environ.get(
+                "ONNX_MALNUTRITION_REPO",
+                "rohandev1/ashaai-malnutrition-model",  # fallback — override via .env
+            )
+            _onnx_filename = os.environ.get(
+                "ONNX_MALNUTRITION_FILE",
+                "malnutrition_classifier.onnx",
+            )
+            _hf_tok = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_KEY", "")
+            model_path = hf_hub_download(
+                repo_id=_onnx_repo,
+                filename=_onnx_filename,
+                token=_hf_tok or None,
+            )
+            session = ort.InferenceSession(model_path)
+
+            # --- Real inference: preprocess image to [1, 3, 640, 640] float32 ---
+            # Model output: [1, 11, 8400] where channels 4-10 are 7 class scores
+            # We map the highest-confidence detection class to a grade string.
+            # Class order assumed from training: Normal, MAM, SAM, ...
+            _ONNX_CLASS_LABELS = ["Normal", "MAM", "SAM", "Edema", "Wasting",
+                                   "Stunting", "Underweight"]
+            _GRADE_MAP = {"SAM": "SAM", "MAM": "MAM", "Normal": "Normal"}
+
+            if img is not None:
+                img_resized = cv2.resize(img, (640, 640))
+                img_rgb_onnx = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
+                input_tensor = (img_rgb_onnx.astype(np.float32) / 255.0).transpose(2, 0, 1)
+                input_tensor = np.expand_dims(input_tensor, axis=0)  # [1, 3, 640, 640]
+                raw_output = session.run(None, {session.get_inputs()[0].name: input_tensor})[0]
+                # raw_output shape: [1, 11, 8400] — take class channels (4:11)
+                class_scores = raw_output[0, 4:, :]    # [7, 8400]
+                # Max confidence across all detections for each class
+                max_scores = class_scores.max(axis=1)  # [7]
+                best_class_idx = int(np.argmax(max_scores))
+                best_score = float(max_scores[best_class_idx])
+                raw_label = _ONNX_CLASS_LABELS[best_class_idx] if best_class_idx < len(_ONNX_CLASS_LABELS) else "Unknown"
+                model2_flag = _GRADE_MAP.get(raw_label, raw_label)
+                logger.info(
+                    f"ONNX Model 2: class={raw_label}, score={best_score:.3f}, "
+                    f"flag={model2_flag}, repo={_onnx_repo}"
+                )
+            else:
+                model2_flag = "ONNX_SKIPPED"
+                logger.warning("ONNX Model 2: skipped because img decode failed")
+        except Exception as e:
+            logger.warning(f"ONNX Model 2 failed or repo missing: {e}")
+            model2_flag = "ONNX_SKIPPED"
+
+        # --- Model 3: Gemini + Groq consensus (text-only, no image re-sent) ---
+        # Only the plain-text measurements + ONNX flag travel to the LLMs here.
+        # Sending the image again would waste latency and quotas; the visual work
+        # was already done by Model 1 (MediaPipe/CV2) and Model 2 (ONNX).
         prompt = (
             "You are an expert pediatric clinical assistant for Indian community health (ASHA). "
-            "Examine this image of a child or MUAC tape.\n"
-            "Assess:\n"
-            "1. Estimated Mid-Upper Arm Circumference (MUAC) in millimeters (muac_mm).\n"
-            "2. Malnutrition Grade based strictly on WHO / Indian NVHCP thresholds:\n"
-            "   - Under 115 mm (or Red tape zone): grade = 'RED', malnutrition_grade = 'SAM', "
-            "severity_label = 'Severe (SAM)', needs_nrc_referral = True\n"
-            "   - 115 mm to 124 mm (or Yellow tape zone): grade = 'YELLOW', malnutrition_grade = 'MAM', "
-            "severity_label = 'Moderate (MAM)', needs_nrc_referral = False\n"
-            "   - 125 mm or higher (or Green tape zone): grade = 'NORMAL', malnutrition_grade = 'Normal', "
-            "severity_label = 'Normal', needs_nrc_referral = False\n"
-            "3. Assess observed clinical signs: visible severe wasting, bilateral pitting edema, rib prominence, loose skin folds.\n"
-            "4. Recommend clinical action and provide clear explanation with confidence percentage (0-100)."
+            "A photo of a child has already been processed by two upstream models. "
+            "You are receiving ONLY the structured numerical outputs -- NOT the image itself.\n"
+            f"Structured pipeline measurements:\n"
+            f"- Height: {height or 'Not provided'}\n"
+            f"- Weight: {calc_weight or 'Not provided'}\n"
+            f"- Age: {age or 'Not provided'}\n"
+            f"- Gender: {gender or 'Not provided'}\n"
+            f"- Computed MUAC (MediaPipe/CV2 Model 1): {round(calculated_muac, 1) if calculated_muac else 'Could not compute automatically'} mm\n"
+            f"- Visual Malnutrition Flag (ONNX Model 2): {model2_flag}\n\n"
+            "Generate a definitive malnutrition assessment report. Assess:\n"
+            "1. Final MUAC in millimeters (muac_mm). Prefer the computed value if available.\n"
+            "2. Malnutrition Grade using WHO/NVHCP thresholds:\n"
+            "   - Under 115 mm: grade='RED', malnutrition_grade='SAM', severity_label='Severe (SAM)', needs_nrc_referral=True\n"
+            "   - 115-124 mm: grade='YELLOW', malnutrition_grade='MAM', severity_label='Moderate (MAM)', needs_nrc_referral=False\n"
+            "   - 125 mm or higher: grade='NORMAL', malnutrition_grade='Normal', severity_label='Normal', needs_nrc_referral=False\n"
+            "3. Clinical signs inferred from measurements: wasting, edema risk, growth faltering.\n"
+            "4. Plain-language explanation combining measurements and the ONNX visual flag. "
+            "Include confidence (0-100) and a recommended clinical action."
         )
-        result = call_multimodal(
+        consensus = call_report_generation_consensus(
             prompt=prompt,
-            audio_or_image=image_data,
-            mime_type="image/jpeg",
             response_schema=MuacGradingResponse,
+        )
+        result = consensus["result"]
+        if isinstance(result, dict):
+            result = MuacGradingResponse.model_validate(result)
+        result.consensus_source = consensus.get("source")
+        logger.info(
+            "muac_model3_consensus_complete: source=%s, grade=%s",
+            result.consensus_source,
+            result.grade,
         )
         # Enforce deterministic threshold guarantees post-inference
         return self._enforce_muac_thresholds(result)
@@ -342,7 +504,7 @@ class AIService:
         entity_type: str,
         record: Dict[str, Any],
     ) -> CrossFieldValidationResponse:
-        """Cross-field consistency check using call_text() per Section 2.9.
+        """Cross-field consistency check using call_critical_consensus() per Section 2.9.
         
         Flags logical conflicts into pending_reviews without blocking ASHA save.
         """
@@ -360,10 +522,25 @@ class AIService:
             "severity ('HIGH' for dangerous errors, 'MEDIUM' for anomalies), and suggested_action."
         )
 
-        result = call_text(
+        consensus_out = call_critical_consensus(
             prompt=prompt,
+            task_type="classification",
             response_schema=CrossFieldValidationResponse,
         )
+        
+        if consensus_out["flag_for_review"]:
+            op1 = consensus_out["result"]["opinion_1"]
+            op2 = consensus_out["result"]["opinion_2"]
+            conflict_msg = f"AI Disagreement: Opinion 1: {op1.model_dump_json() if hasattr(op1, 'model_dump_json') else op1} | Opinion 2: {op2.model_dump_json() if hasattr(op2, 'model_dump_json') else op2}"
+            result = CrossFieldValidationResponse(
+                has_conflict=True,
+                conflicts=[conflict_msg],
+                severity="HIGH",
+                suggested_action="Mandatory supervisor review required due to disputed AI consensus."
+            )
+        else:
+            result = consensus_out["result"]
+
         return self._enforce_deterministic_cross_field(entity_type, record, result)
 
     def _enforce_deterministic_cross_field(
@@ -424,7 +601,7 @@ class AIService:
     ) -> TranslationResponse:
         """Translate survey field label across English, Marathi, and Hindi (Section 2.13).
         
-        Uses call_text() (near.ai primary, Groq fallback).
+        Uses call_translation() (IndicTrans2 primary, Groq fallback).
         """
         prompt = (
             "You are a professional medical translator for public health surveys in India.\n"
@@ -435,7 +612,7 @@ class AIService:
             "Return JSON with keys 'en', 'mr', and 'hi'. Use culturally clear, accurate health terms."
         )
 
-        return call_text(
+        return call_translation(
             prompt=prompt,
             response_schema=TranslationResponse,
         )

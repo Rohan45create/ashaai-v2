@@ -113,4 +113,29 @@ public class AdminController {
         if (auth.getAshaHeadId() == null) return ResponseEntity.status(403).build();
         return ResponseEntity.ok(adminService.getWorkersOverview(headId));
     }
+
+    @PostMapping("/supervisor/workers/add")
+    public ResponseEntity<java.util.Map<String, Object>> addWorker(
+            @org.springframework.web.bind.annotation.RequestBody java.util.Map<String, String> request,
+            org.springframework.security.core.Authentication authentication) {
+        com.ashaai.backend.security.AshaAuthenticationToken auth =
+            (com.ashaai.backend.security.AshaAuthenticationToken) authentication;
+        if (auth.getAshaHeadId() == null) return ResponseEntity.status(403).build();
+
+        String name = request.get("name");
+        String phone = request.get("phone");
+        String village = request.get("village");
+        String district = request.get("district");
+
+        if (name == null || phone == null || village == null || district == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        com.ashaai.backend.entity.Asha newAsha = adminService.addWorker(auth.getAshaHeadId(), name, phone, village, district);
+        
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("id", newAsha.getId().toString());
+        response.put("name", newAsha.getName());
+        return ResponseEntity.ok(response);
+    }
 }

@@ -59,7 +59,7 @@ public class AiIntegrationService {
                 .body(String.class);
     }
 
-    public String gradeMuacPhoto(MultipartFile imageFile) {
+    public String gradeMuacPhoto(MultipartFile imageFile, String age, String gender, String height, String weight) {
         MultipartBodyBuilder builder = new MultipartBodyBuilder();
         try {
             builder.part("image", new org.springframework.core.io.ByteArrayResource(imageFile.getBytes()) {
@@ -71,6 +71,11 @@ public class AiIntegrationService {
         } catch (java.io.IOException e) {
             throw new RuntimeException("Failed to read image file", e);
         }
+
+        if (age != null && !age.isBlank()) builder.part("age", age);
+        if (gender != null && !gender.isBlank()) builder.part("gender", gender);
+        if (height != null && !height.isBlank()) builder.part("height", height);
+        if (weight != null && !weight.isBlank()) builder.part("weight", weight);
 
         return restClient.post()
                 .uri("/api/ai/vision/muac-grade")

@@ -21,6 +21,12 @@ class MuacGradingResponse(BaseModel):
     recommendation: Optional[str] = Field(None, description="Clinical recommended action")
     needs_nrc_referral: bool = Field(default=False, description="True if Severe Acute Malnutrition (SAM)")
     explanation: Optional[str] = Field(None, description="Clinical reasoning explanation")
+    consensus_source: Optional[str] = Field(
+        default=None,
+        description="Provenance of the final report: 'consensus_merged' (Gemini+Groq both succeeded and merged), "
+                    "'single_source' (only one provider succeeded), or None (legacy path)."
+    )
+
 
 class RegisterRow(BaseModel):
     fields: Dict[str, Any] = Field(default_factory=dict, description="Extracted column name to value mapping")
