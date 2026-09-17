@@ -16,10 +16,15 @@ const STATUS_I18N = {
 // ─── Status config (matching existing "Pending","Admitted","Discharged","Follow-up Due") ──
 const STATUS_CONFIG = {
   'Pending':        { label: 'Pending Review', color: '#BA7517', bg: '#FAEEDA', icon: 'pending_actions' },
+  'pending':        { label: 'Pending Review', color: '#BA7517', bg: '#FAEEDA', icon: 'pending_actions' },
   'Admitted':       { label: 'Admitted',        color: '#185FA5', bg: '#E6F1FB', icon: 'local_hospital' },
+  'admitted':       { label: 'Admitted',        color: '#185FA5', bg: '#E6F1FB', icon: 'local_hospital' },
   'Discharged':     { label: 'Discharged',      color: '#27500A', bg: '#EAF3DE', icon: 'home' },
+  'discharged':     { label: 'Discharged',      color: '#27500A', bg: '#EAF3DE', icon: 'home' },
   'Follow-up Due':  { label: 'Follow-up Due',   color: '#E24B4A', bg: '#FCEBEB', icon: 'calendar_today' },
+  'follow_up_due':  { label: 'Follow-up Due',   color: '#E24B4A', bg: '#FCEBEB', icon: 'calendar_today' },
   'Rejected':       { label: 'Rejected',         color: '#E24B4A', bg: '#FCEBEB', icon: 'cancel' },
+  'rejected':       { label: 'Rejected',         color: '#E24B4A', bg: '#FCEBEB', icon: 'cancel' },
 };
 
 const RISK_CONFIG = {
@@ -299,8 +304,14 @@ export default function Referrals() {
   }, [headId]);
 
   const FILTERS = ['All', 'Pending', 'Admitted', 'Discharged', 'Follow-up Due', 'Rejected'];
-  const filtered = filter === 'All' ? referrals : referrals.filter(r => r.status === filter);
-  const pendingCount = referrals.filter(r => r.status === 'Pending').length;
+  const isMatchStatus = (rStatus, target) => {
+    if (!rStatus) return false;
+    if (rStatus.toLowerCase() === target.toLowerCase()) return true;
+    if (target === 'Follow-up Due' && rStatus.toLowerCase().includes('follow')) return true;
+    return false;
+  };
+  const filtered = filter === 'All' ? referrals : referrals.filter(r => isMatchStatus(r.status, filter));
+  const pendingCount = referrals.filter(r => isMatchStatus(r.status, 'Pending')).length;
 
   return (
     <div style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
@@ -325,7 +336,7 @@ export default function Referrals() {
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', overflowX: 'auto', paddingBottom: '4px' }}>
         {FILTERS.map(f => {
           const sCfg = f !== 'All' ? STATUS_CONFIG[f] : null;
-          const count = f === 'All' ? referrals.length : referrals.filter(r => r.status === f).length;
+          const count = f === 'All' ? referrals.length : referrals.filter(r => isMatchStatus(r.status, f)).length;
           return (
             <button
               key={f}

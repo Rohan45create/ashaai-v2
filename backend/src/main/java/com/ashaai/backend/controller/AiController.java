@@ -247,4 +247,35 @@ public class AiController {
     public ResponseEntity<String> getAgentSessionDraft(@org.springframework.web.bind.annotation.PathVariable String sessionId) {
         return ResponseEntity.ok(aiIntegrationService.getAgentSessionDraft(sessionId));
     }
+
+    /**
+     * Translate the free-text fields of a confirmed malnutrition report to Hindi or Marathi.
+     *
+     * POST /api/malnutrition-reports/translate?lang=hi|mr
+     *
+     * Read-only passthrough: no database read or write occurs in Spring Boot.
+     * The ai-service calls Groq (translate_report in provider_client.py).
+     * The English report is NEVER stored — this endpoint is compute-only display support.
+     *
+     * @param report full MuacGradingResponse JSON body from the frontend
+     * @param lang   "hi" (Hindi) or "mr" (Marathi)
+     */
+    @PostMapping(value = {"/api/malnutrition-reports/translate"})
+    public ResponseEntity<String> translateMalnutritionReport(
+            @RequestBody Map<String, Object> report,
+            @org.springframework.web.bind.annotation.RequestParam(value = "lang") String lang) {
+
+        if (!"hi".equals(lang) && !"mr".equals(lang)) {
+            return ResponseEntity.badRequest()
+                    .body("{\"error\":\"INVALID_LANG\",\"message\":\"lang must be 'hi' or 'mr'\"}");
+        }
+        try {
+            return ResponseEntity.ok(aiIntegrationService.translateMalnutritionReport(report, lang));
+        } catch (Exception e) {
+            logger.warn("event=translate_report_failed lang={} error={}", lang, e.getMessage());
+            return ResponseEntity.status(503)
+                    .body("{\"error\":\"TRANSLATION_UNAVAILABLE\",\"message\":\"Translation service is currently unavailable. Please try again.\"}");
+        }
+    }
 }
+

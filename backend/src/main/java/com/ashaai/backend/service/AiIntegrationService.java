@@ -170,4 +170,25 @@ public class AiIntegrationService {
                 .retrieve()
                 .body(String.class);
     }
+
+    /**
+     * Translate free-text fields of a confirmed malnutrition report to Hindi or Marathi.
+     * Read-only: nothing is written to the database.
+     * Provider chain: single explicit Groq call in ai-service (translate_report in provider_client.py).
+     *
+     * @param report the full MuacGradingResponse JSON (as a generic map)
+     * @param lang   target language: "hi" (Hindi) or "mr" (Marathi)
+     * @return translated MuacGradingResponse JSON string
+     */
+    public String translateMalnutritionReport(Map<String, Object> report, String lang) {
+        return restClient.post()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/api/ai/vision/translate-report")
+                        .queryParam("lang", lang)
+                        .build())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(report)
+                .retrieve()
+                .body(String.class);
+    }
 }

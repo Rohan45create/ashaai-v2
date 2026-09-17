@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import AppErrorBoundary from './components/AppErrorBoundary';
 
 // Guards & Layouts
@@ -46,6 +46,12 @@ const NGOManagement = lazy(() => import('./routes/admin/NGOManagement.jsx'));
 
 import { useAuthStore } from './stores/authStore';
 import { useConfigStore } from './utils/configStore';
+
+const ChildGrowthSurveyRedirect = () => {
+  const [searchParams] = useSearchParams();
+  const qs = searchParams.toString();
+  return <Navigate to={`/asha/dynamic-survey?id=child_growth${qs ? `&${qs}` : ''}`} replace />;
+};
 
 const LoadingFallback = ({ authTimedOut }) => (
   <div className="min-h-screen bg-[#F1EFE8] flex flex-col p-4 animate-pulse">
@@ -239,6 +245,7 @@ const App = () => {
             </Route>
 
             {/* Redirects */}
+            <Route path="/survey/child_growth" element={<ChildGrowthSurveyRedirect />} />
             <Route path="/" element={<Navigate to="/asha/home" replace />} />
             <Route path="/asha" element={<Navigate to="/asha/home" replace />} />
             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />

@@ -27,6 +27,7 @@ import EmptyState from '../../../components/EmptyState';
 import BaseModuleForm from '../../../components/BaseModuleForm';
 import AadhaarLinkagePopup from '../../../components/AadhaarLinkagePopup';
 import { apiFetch } from '../../../utils/api';
+import { useAuthStore } from '../../../stores/authStore';
 import {
   Home as HouseIcon, User, Baby, Syringe, Heart, Stethoscope, ClipboardList,
   Microscope, Eye, Hand, Pill, Bandage, Users, MapPin, Droplet, Shield, LineChart, Leaf,
@@ -91,10 +92,26 @@ function mapField(f) {
 }
 
 export default function DynamicSurvey() {
+  const { user, ashaId: storeAshaId } = useAuthStore();
   const [searchParams] = useSearchParams();
   const surveyId = searchParams.get('id');
   const [template, setTemplate] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Feature 2: Generic pre-fill from ?prefill=<base64-JSON> query param.
+  // DynamicSurvey.jsx has no knowledge of what produced the payload — it simply
+  // decodes and passes to BaseModuleForm. The NRC Referral flow in
+  // MalnutritionScannerWidget is what currently produces this param.
+  const [initialValues, setInitialValues] = useState(() => {
+    const raw = searchParams.get('prefill');
+    if (!raw) return null;
+    try {
+      return JSON.parse(atob(raw));
+    } catch {
+      console.warn('[DynamicSurvey] Could not decode ?prefill param — ignoring.');
+      return null;
+    }
+  });
 
   const [showLinkagePopup, setShowLinkagePopup] = useState(false);
   const [linkageData, setLinkageData] = useState(null);
@@ -236,6 +253,32 @@ export default function DynamicSurvey() {
     }
   };
 
+  const handleSubmit = async (formData) => {
+    const resolvedAshaId = storeAshaId || localStorage.getItem('ashaId') || user?.uid;
+    const resolvedHouseholdId = linkageConfirmedData?.household_id || formData.household_id || initialValues?._prefill_household_id || null;
+    const resolvedMemberId = linkageConfirmedData?.member_id || initialValues?._prefill_member_id || formData.household_member_id || null;
+
+    const payload = {
+      templateId: template?.id,
+      moduleKey: template?.moduleKey,
+      householdId: resolvedHouseholdId,
+      householdMemberId: resolvedMemberId,
+      ashaId: resolvedAshaId,
+      referredToNrc: formData.referred_to_nrc === true || formData.referred_to_nrc === 'true',
+      data: formData,
+    };
+
+    const result = await apiFetch('/api/surveySubmissions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    if (linkageConfirmedData && result) {
+      await handleAfterSubmit(result.id || result.uuid, formData);
+    }
+    return result;
+  };
+
   const title = template.nameEn || template.title || 'Survey';
 
   return (
@@ -252,8 +295,10 @@ export default function DynamicSurvey() {
         showAadhaar={hasAadhaarField}
         aadhaarPersonLabel="Participant"
         onAadhaarScanned={handleAadhaarEntered}
+        onSubmit={handleSubmit}
         afterSubmit={handleAfterSubmit}
         extraData={{ templateId: template.id, moduleKey: template.moduleKey }}
+        initialValues={initialValues}
       />
       <AadhaarLinkagePopup
         isOpen={showLinkagePopup}

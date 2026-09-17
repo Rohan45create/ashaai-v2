@@ -207,14 +207,12 @@ export default function ChildGrowth() {
         onGradeConfirmed={(payload) => {
           setPrefillData((prev) => ({
             ...prev,
-            malnutritionGrade: payload.malnutritionGrade,
-            muac_color: payload.muac_color,
-            muac_cm: payload.muac_cm || prev?.muac_cm
+            ...payload,
           }));
         }}
       />
 
-      {/* â”€â”€ Orphan Toggle â”€â”€ */}
+      {/* ── Orphan Toggle ── */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#D3D1C7]">
         <label className="block text-sm font-medium mb-3 text-[#5F5E5A]">
           Does this child have parents or a guardian?
@@ -244,13 +242,14 @@ export default function ChildGrowth() {
         )}
       </div>
 
-      {/* â”€â”€ Regular Form â”€â”€ */}
+      {/* ── Regular Form ── */}
       <BaseModuleForm
         title="Child Growth / बाल वाढ"
         moduleIcon="child_care"
         collectionName="children"
         moduleName="child_growth"
         fields={FIELDS}
+        initialValues={prefillData}
         onFormChange={setPrefillData}
         showAadhaar={hasParents}
         aadhaarPersonLabel="Child / बालक"

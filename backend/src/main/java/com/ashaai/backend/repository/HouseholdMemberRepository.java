@@ -13,4 +13,6 @@ public interface HouseholdMemberRepository extends JpaRepository<HouseholdMember
     
     @Query("SELECT m FROM HouseholdMember m WHERE m.aadhaarLast4 = :last4 AND m.household.asha.id = :ashaId")
     List<HouseholdMember> findByAadhaarLast4AndAshaId(String last4, UUID ashaId);
+
+    List<HouseholdMember> findByNameIgnoreCase(String name);
 }

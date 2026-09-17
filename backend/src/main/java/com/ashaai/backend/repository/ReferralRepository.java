@@ -10,4 +10,5 @@ import java.util.UUID;
 @Repository
 public interface ReferralRepository extends JpaRepository<Referral, UUID> {
     List<Referral> findByChild_Asha_Id(UUID ashaId);
+    List<Referral> findByAsha_Id(UUID ashaId);
 }

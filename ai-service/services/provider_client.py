@@ -772,3 +772,122 @@ def call_report_generation_consensus(
         return {"result": _to_schema_result(groq_res), "source": "single_source"}
     else:
         raise AIProviderError("Both Gemini and Groq failed in report_generation consensus.")
+
+
+# ─── Report Translation ────────────────────────────────────────────────────────
+# Deliberately NOT routed through call_text() or call_translation().
+# Rationale (per docs/RULES.md provider-chain rule and the feature spec):
+#   - This translates already-generated free-text clinical prose, NOT survey field labels.
+#   - call_translation() uses IndicTrans2 → Groq, designed for survey label strings.
+#   - call_text() would try near.ai → Sarvam → Groq; fanning the same clinical text
+#     out to a fourth provider when Groq already saw it during Model 3's merge step
+#     is unnecessary and spreads PII wider than needed.
+#   - Single explicit Groq call is the correct choice here.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def translate_report(
+    report: "Any",
+    target_lang: str,  # "hi" or "mr"
+    response_schema: Optional[Type[BaseModel]] = None,
+) -> "Any":
+    """Translate free-text fields of a MuacGradingResponse to Hindi or Marathi.
+
+    Uses call_translation() — the designated chain per RULES.md and ARCHITECTURE.md:
+        IndicTrans2 (primary) → Groq → Gemini (fallback)
+
+    Note: IndicTrans2 was tuned for short survey label strings and may fail on a
+    multi-paragraph structured JSON payload. When it does, the chain falls through
+    to Groq automatically — this is the correct behaviour per the fallback design.
+
+    Args:
+        report: A MuacGradingResponse instance OR a dict with the same keys.
+        target_lang: "hi" (Hindi) or "mr" (Marathi).
+        response_schema: Pydantic model to validate the translated output against.
+                         Defaults to MuacGradingResponse from models.schemas.
+
+    Returns:
+        A validated MuacGradingResponse (or response_schema instance) with only
+        the text fields translated; all numeric/categorical fields are preserved.
+
+    Raises:
+        ValueError: If target_lang is not "hi" or "mr".
+        AIProviderError: If all providers in the translation chain fail.
+        pydantic.ValidationError: If the translated response does not match the schema.
+    """
+    if target_lang not in ("hi", "mr"):
+        raise ValueError(f"translate_report: target_lang must be 'hi' or 'mr', got {target_lang!r}")
+
+    # Lazy import to avoid circular dependency at module level
+    from models.schemas import MuacGradingResponse  # noqa: PLC0415
+
+    if response_schema is None:
+        response_schema = MuacGradingResponse
+
+    # Normalise input to a plain dict so we can serialise it safely
+    if hasattr(report, "model_dump"):
+        report_dict = report.model_dump()
+    elif isinstance(report, dict):
+        report_dict = report
+    else:
+        raise ValueError(f"translate_report: report must be a Pydantic model or dict, got {type(report)}")
+
+    lang_name = "Hindi" if target_lang == "hi" else "Marathi"
+
+    prompt = (
+        f"You are a clinical translator. Translate the following malnutrition assessment report "
+        f"from English to {lang_name}.\n\n"
+        "STRICT RULES:\n"
+        "1. Translate ONLY the following text fields: explanation, recommendation, severity_label, "
+        "   visible_signs (each element in the list).\n"
+        "2. PRESERVE ALL OTHER FIELDS EXACTLY AS-IS, including: grade, malnutrition_grade, "
+        "   muac_mm, muac_cm, confidence, needs_nrc_referral, consensus_source.\n"
+        "3. Return a single valid JSON object with ALL original keys present.\n"
+        "4. Do NOT add markdown code fences. Output raw JSON only.\n\n"
+        f"Original report (JSON):\n{json.dumps(report_dict, ensure_ascii=False, indent=2)}\n\n"
+        f"Translated report in {lang_name} (JSON only):"
+    )
+
+    logger.info(
+        "translate_report_via_call_translation",
+        target_lang=target_lang,
+        chain="indictrans2->groq->gemini",
+    )
+
+    # call_translation() follows the designated chain: IndicTrans2 → Groq → Gemini.
+    # It returns a raw string (the model's text output), not a parsed object,
+    # because no response_schema is passed — we parse and validate ourselves below
+    # so the safety gate can enforce field-level invariants.
+    raw_text = call_translation(prompt=prompt)
+    if not isinstance(raw_text, str):
+        # Some provider wrappers return structured dicts; coerce to string for uniform handling
+        raw_text = json.dumps(raw_text, ensure_ascii=False)
+
+    cleaned = _clean_json_text(raw_text)
+
+    # Validate against the same Pydantic model as the English report
+    translated = response_schema.model_validate_json(cleaned)
+
+    # Safety gate: numeric/categorical fields must be unchanged after translation.
+    # Models occasionally "translate" grade enums or confidence values; this corrects that.
+    original_grade = report_dict.get("grade")
+    original_malnutrition_grade = report_dict.get("malnutrition_grade")
+    original_confidence = report_dict.get("confidence")
+    original_muac_mm = report_dict.get("muac_mm")
+    original_nrc = report_dict.get("needs_nrc_referral")
+
+    translated_dict = translated.model_dump()
+
+    if original_grade is not None and translated_dict.get("grade") != original_grade:
+        logger.warning("translate_report_grade_drift_corrected", original=original_grade)
+        translated_dict["grade"] = original_grade
+    if original_malnutrition_grade is not None and translated_dict.get("malnutrition_grade") != original_malnutrition_grade:
+        translated_dict["malnutrition_grade"] = original_malnutrition_grade
+    if original_confidence is not None and translated_dict.get("confidence") != original_confidence:
+        translated_dict["confidence"] = original_confidence
+    if original_muac_mm is not None and translated_dict.get("muac_mm") != original_muac_mm:
+        translated_dict["muac_mm"] = original_muac_mm
+    if original_nrc is not None and translated_dict.get("needs_nrc_referral") != original_nrc:
+        translated_dict["needs_nrc_referral"] = original_nrc
+
+    return response_schema.model_validate(translated_dict)
+

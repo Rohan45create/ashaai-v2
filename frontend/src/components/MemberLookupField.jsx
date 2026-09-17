@@ -135,21 +135,21 @@ export default function MemberLookupField({
   const isSelected = !!value?.memberId;
 
   return (
-    <div className="mb-4" ref={dropdownRef}>
+    <div className="mb-4 w-full max-w-full min-w-0 box-border" ref={dropdownRef}>
       <label className="block text-sm font-medium mb-1 text-[#5F5E5A]">
         {field.label}
         {field.required && <span className="text-[#E24B4A] ml-1">*</span>}
       </label>
 
       {/* Search input */}
-      <div className="relative">
+      <div className="relative w-full max-w-full min-w-0 box-border">
         <input
           type="text"
           value={query}
           onChange={handleQueryChange}
           disabled={disabled}
           placeholder={field.placeholder || `Search by name, DOB, or address…`}
-          className={`w-full p-3 border rounded-xl outline-none focus:border-[#1D9E75] transition-colors pr-10 ${
+          className={`w-full max-w-full box-border p-3 border rounded-xl outline-none focus:border-[#1D9E75] transition-colors pr-10 ${
             error ? 'border-[#E24B4A]' : isSelected ? 'border-[#1D9E75] bg-[#F0FFF8]' : 'border-[#D3D1C7]'
           }`}
         />

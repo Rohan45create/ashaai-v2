@@ -1,0 +1,72 @@
+{
+  "_comment": "Schema-driven mapping from malnutrition report and session fields to child_growth survey field IDs.",
+  "mappings": [
+    {
+      "from_report": "muac_mm",
+      "field_id": "muac_cm",
+      "transform": "mm_to_cm",
+      "description": "muac_mm (millimetres from report) to muac_cm (centimetres in form)"
+    },
+    {
+      "from_report": "malnutrition_grade",
+      "field_id": "malnutritionGrade",
+      "transform": null,
+      "description": "AI visual malnutrition grade (NORMAL/YELLOW/RED)"
+    },
+    {
+      "from_report": "grade",
+      "field_id": "muac_color",
+      "transform": null,
+      "description": "MUAC colour zone from report grade (GREEN/YELLOW/RED)"
+    },
+    {
+      "from_report": "weight_kg",
+      "field_id": "weight_kg",
+      "transform": null,
+      "description": "Weight in kg from scanner manual input or session data"
+    },
+    {
+      "from_report": "height_cm",
+      "field_id": "height_cm",
+      "transform": null,
+      "description": "Height in cm from scanner manual input or session data"
+    },
+    {
+      "from_report": "age_months",
+      "field_id": "age_months",
+      "transform": null,
+      "description": "Child age in months from scanner manual input or session data"
+    },
+    {
+      "from_report": "gender",
+      "field_id": "gender",
+      "transform": null,
+      "description": "Child gender from scanner manual input or session data"
+    },
+    {
+      "from_report": "child_name",
+      "field_id": "child_name",
+      "transform": null,
+      "description": "Child name resolved in session"
+    },
+    {
+      "from_report": "mother_lookup",
+      "field_id": "mother_name",
+      "transform": null,
+      "description": "Mother name / lookup resolved in session"
+    },
+    {
+      "from_report": null,
+      "field_id": "referred_to_nrc",
+      "transform": null,
+      "value": true,
+      "description": "Always pre-checked true when navigating from a malnutrition report. Fully editable by worker."
+    },
+    {
+      "from_report": "explanation",
+      "field_id": "illness_signs",
+      "transform": null,
+      "description": "AI clinical explanation pre-filled into illness_signs textarea. Worker can edit freely."
+    }
+  ]
+}

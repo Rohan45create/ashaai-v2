@@ -48,7 +48,7 @@ function evaluateDerives(derives, formData) {
   return '';
 }
 
-export default function BaseModuleForm({ title, moduleIcon, templateIcon, collectionName, fields, sections, preGate, moduleName, onSubmit, onFormChange, showAadhaar = true, aadhaarPersonLabel = '', extraData = {}, onAadhaarScanned, afterSubmit, renderCustomTop }) {
+export default function BaseModuleForm({ title, moduleIcon, templateIcon, collectionName, fields, sections, preGate, moduleName, onSubmit, onFormChange, showAadhaar = true, aadhaarPersonLabel = '', extraData = {}, onAadhaarScanned, afterSubmit, renderCustomTop, initialValues = null }) {
   const { user, ashaId: storeAshaId } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
@@ -60,8 +60,32 @@ export default function BaseModuleForm({ title, moduleIcon, templateIcon, collec
     if (isViewMode && viewState?.submissionData) {
       return viewState.submissionData;
     }
+    // Merge pre-fill values from the NRC Referral navigation (or any future caller)
+    // into the initial form state. Internal keys prefixed with '_' (e.g. _prefill_member_id)
+    // are passed through to extraData but not rendered as form fields.
+    if (initialValues && typeof initialValues === 'object') {
+      return { ...initialValues };
+    }
     return {};
   });
+
+  // Track which field IDs were seeded from initialValues or scanner so we can show the badge.
+  // Internal keys starting with '_' are excluded (they are metadata, not field IDs).
+  const [extraPrefillKeys, setExtraPrefillKeys] = useState(() => new Set());
+  const prefillFilledFields = useMemo(() => {
+    const s = new Set(extraPrefillKeys);
+    if (initialValues && typeof initialValues === 'object') {
+      Object.keys(initialValues).filter(k => !k.startsWith('_')).forEach(k => s.add(k));
+    }
+    return s;
+  }, [initialValues, extraPrefillKeys]);
+
+  useEffect(() => {
+    if (initialValues && typeof initialValues === 'object' && Object.keys(initialValues).length > 0) {
+      setFormData(prev => ({ ...initialValues, ...prev }));
+    }
+  }, [initialValues]);
+  
   
   const [gateValue, setGateValue] = useState(true); // pre_gate toggle
 
@@ -319,7 +343,7 @@ export default function BaseModuleForm({ title, moduleIcon, templateIcon, collec
   };
 
   return (
-    <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#D3D1C7] relative">
+    <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-[#D3D1C7] relative w-full max-w-full min-w-0 box-border overflow-hidden">
       {/* Toast */}
       {toast && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl shadow-lg text-sm font-medium flex items-center space-x-2 animate-slide-down ${
@@ -354,16 +378,16 @@ export default function BaseModuleForm({ title, moduleIcon, templateIcon, collec
       {/* Custom top section (e.g. ANC genetic prediction) */}
       {renderCustomTop && <renderCustomTop />}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4 w-full max-w-full min-w-0 box-border">
         {isViewMode && (
           <div style={{background:'#EAF3DE', padding:'10px 16px', borderRadius:8, marginBottom:12, display:'flex', justifyContent:'space-between', alignItems:'center'}}>
             <span style={{fontSize:13, color:'#27500A', fontWeight:500}}>{tx('Viewing submitted record')}</span>
           </div>
         )}
-        <fieldset disabled={isViewMode} className="space-y-4 border-none p-0 m-0">
+        <fieldset disabled={isViewMode} className="space-y-4 border-none p-0 m-0 w-full max-w-full min-w-0 box-border">
         
         {preGate && !isViewMode && (
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#D3D1C7] mb-4">
+          <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-[#D3D1C7] mb-4 w-full max-w-full min-w-0 box-border">
             <label className="block text-sm font-medium mb-3 text-[#5F5E5A]">
               {tx(preGate.label)}
             </label>
@@ -439,15 +463,12 @@ export default function BaseModuleForm({ title, moduleIcon, templateIcon, collec
                   );
                 }
 
-                // computed: derives its value from another field via schema thresholds (read-only)
+                // computed: derives its value from another field via schema thresholds or prefilled from report
                 if (field.type === 'computed' || field.derives) {
                   const derived = evaluateDerives(field.derives, formData);
+                  const displayVal = derived || val;
                   // Auto-apply derived value into formData when it changes
                   if (derived && formData[field.id] !== derived) {
-                    // Use a ref-safe approach: mutate formData in render is bad;
-                    // we schedule a state update only if value actually changed.
-                    // Using useEffect is not possible inside renderField, so we
-                    // trigger it via a 0-timeout to avoid React batching issues.
                     setTimeout(() => {
                       setFormData(prev => {
                         if (prev[field.id] === derived) return prev;
@@ -457,23 +478,22 @@ export default function BaseModuleForm({ title, moduleIcon, templateIcon, collec
                       });
                     }, 0);
                   }
-                  const derivedConfig = field.derivedDisplay || {};
                   const colorMap = { GREEN: '#1D9E75', YELLOW: '#F0A500', RED: '#E24B4A',
                     NORMAL: '#1D9E75', MAM: '#F0A500', SAM: '#E24B4A' };
-                  const color = colorMap[derived] || '#5F5E5A';
+                  const color = colorMap[displayVal] || '#5F5E5A';
                   return (
-                    <div key={errorKey} className="mb-4">
+                    <div key={errorKey} className="mb-4 w-full max-w-full min-w-0 box-border">
                       <label className="block text-sm font-medium mb-1 text-[#5F5E5A]">
                         {tx(field.label)}
                       </label>
-                      <div className="flex items-center gap-3 p-3 border border-[#D3D1C7] rounded-xl bg-gray-50">
+                      <div className="flex items-center gap-3 p-3 border border-[#D3D1C7] rounded-xl bg-gray-50 w-full max-w-full min-w-0 box-border">
                         <span className="material-symbols-outlined" style={{ color }}>
-                          {derived === 'GREEN' || derived === 'NORMAL' ? 'check_circle' :
-                           derived === 'YELLOW' || derived === 'MAM' ? 'warning' :
-                           derived === 'RED' || derived === 'SAM' ? 'crisis_alert' : 'calculate'}
+                          {displayVal === 'GREEN' || displayVal === 'NORMAL' ? 'check_circle' :
+                           displayVal === 'YELLOW' || displayVal === 'MAM' ? 'warning' :
+                           displayVal === 'RED' || displayVal === 'SAM' ? 'crisis_alert' : 'calculate'}
                         </span>
                         <span className="font-bold" style={{ color }}>
-                          {derived || '—'}
+                          {displayVal || '—'}
                         </span>
                         <span className="text-xs text-gray-400 ml-1">(auto-computed)</span>
                       </div>
@@ -486,30 +506,44 @@ export default function BaseModuleForm({ title, moduleIcon, templateIcon, collec
                   return (
                     <MalnutritionScannerWidget 
                       key={errorKey}
-                      prefillData={formData} 
+                      prefillData={formData}
+                      householdMemberId={initialValues?._prefill_member_id || null}
                       onGradeConfirmed={(payload) => {
                         setFormData(prev => {
                           const next = { ...prev, ...payload };
                           if (onFormChange) onFormChange(next);
                           return next;
                         });
+                        if (payload && typeof payload === 'object') {
+                          const newKeys = Object.keys(payload).filter(k => !k.startsWith('_'));
+                          setExtraPrefillKeys(prev => new Set([...prev, ...newKeys]));
+                        }
                       }} 
                     />
                   );
                 }
 
                 return (
-                  <div key={errorKey} className="mb-4">
+                  <div key={errorKey} className="mb-4 w-full max-w-full min-w-0 box-border">
                     <label className="block text-sm font-medium mb-1 text-[#5F5E5A]">
                       {tx(field.label)}
                       {field.required && <span className="text-[#E24B4A] ml-1">*</span>}
                     </label>
+                    {/* Pre-filled badge — shown for fields seeded from initialValues (e.g. NRC Referral) */}
+                    {prefillFilledFields.has(field.id) && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '4px' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '13px', color: '#7A5500' }}>assignment_ind</span>
+                        <span style={{ fontSize: '11px', color: '#7A5500', fontWeight: '600', background: '#FFF8E1', padding: '1px 8px', borderRadius: '20px', border: '1px solid #FFCA28' }}>
+                          Pre-filled from malnutrition report — please confirm
+                        </span>
+                      </div>
+                    )}
                     {field.type === 'select' ? (
                       <select
                         required={field.required}
                         value={val}
                         onChange={(e) => handleChange(e, field.id, sectionId, index)}
-                        className={`w-full p-3 border rounded-xl outline-none focus:border-[#1D9E75] bg-white transition-colors ${
+                        className={`w-full max-w-full box-border p-3 border rounded-xl outline-none focus:border-[#1D9E75] bg-white transition-colors ${
                           errors[errorKey] ? 'border-[#E24B4A]' : 'border-[#D3D1C7]'
                         }`}
                       >
@@ -520,7 +554,7 @@ export default function BaseModuleForm({ title, moduleIcon, templateIcon, collec
                       <div className="flex items-center space-x-2">
                         <input
                           type="checkbox"
-                          checked={val || false}
+                          checked={val === true || val === 'true'}
                           onChange={(e) => handleChange(e, field.id, sectionId, index)}
                           className="w-5 h-5 accent-[#1D9E75]"
                         />
@@ -533,7 +567,7 @@ export default function BaseModuleForm({ title, moduleIcon, templateIcon, collec
                         onChange={(e) => handleChange(e, field.id, sectionId, index)}
                         placeholder={field.placeholder}
                         rows={3}
-                        className={`w-full p-3 border rounded-xl outline-none focus:border-[#1D9E75] transition-colors resize-none ${
+                        className={`w-full max-w-full box-border p-3 border rounded-xl outline-none focus:border-[#1D9E75] transition-colors resize-none ${
                           errors[errorKey] ? 'border-[#E24B4A]' : 'border-[#D3D1C7]'
                         }`}
                       />
@@ -551,7 +585,7 @@ export default function BaseModuleForm({ title, moduleIcon, templateIcon, collec
                         }}
                         placeholder={field.placeholder}
                         maxLength={field.maxLength}
-                        className={`w-full p-3 border rounded-xl outline-none focus:border-[#1D9E75] transition-colors ${
+                        className={`w-full max-w-full box-border p-3 border rounded-xl outline-none focus:border-[#1D9E75] transition-colors ${
                           errors[errorKey] ? 'border-[#E24B4A]' : 'border-[#D3D1C7]'
                         }`}
                       />
