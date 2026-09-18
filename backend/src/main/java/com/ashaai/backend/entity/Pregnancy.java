@@ -118,4 +118,16 @@ public class Pregnancy extends BaseEntity {
 
     public Boolean getJsyBenefit() { return jsyBenefit; }
     public void setJsyBenefit(Boolean jsyBenefit) { this.jsyBenefit = jsyBenefit; }
+
+    @jakarta.persistence.Column(name = "created_at")
+    private java.time.OffsetDateTime createdAt;
+
+    @jakarta.persistence.Column(name = "updated_at")
+    private java.time.OffsetDateTime updatedAt;
+
+    public java.time.OffsetDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(java.time.OffsetDateTime createdAt) { this.createdAt = createdAt; }
+
+    public java.time.OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(java.time.OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

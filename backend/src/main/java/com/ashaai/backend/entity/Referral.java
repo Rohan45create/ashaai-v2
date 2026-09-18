@@ -1,5 +1,7 @@
 package com.ashaai.backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.Entity;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -7,9 +9,11 @@ import jakarta.persistence.Table;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "referrals")
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class Referral extends BaseEntity {
 
     @ManyToOne
@@ -54,7 +58,38 @@ public class Referral extends BaseEntity {
     public String getNrcName() { return nrcName; }
     public void setNrcName(String nrcName) { this.nrcName = nrcName; }
 
-    @com.fasterxml.jackson.annotation.JsonProperty("childName")
+    @JsonProperty("childId")
+    public UUID getChildId() {
+        return child != null ? child.getId() : null;
+    }
+
+    @JsonProperty("householdMemberId")
+    public UUID getHouseholdMemberId() {
+        if (householdMember != null) {
+            return householdMember.getId();
+        }
+        if (child != null && child.getHouseholdMember() != null) {
+            return child.getHouseholdMember().getId();
+        }
+        return null;
+    }
+
+    @JsonProperty("ashaId")
+    public UUID getAshaId() {
+        return asha != null ? asha.getId() : null;
+    }
+
+    @JsonProperty("ashaName")
+    public String getAshaName() {
+        return asha != null ? asha.getName() : null;
+    }
+
+    @JsonProperty("riskScore")
+    public Integer getRiskScore() {
+        return child != null ? child.getRiskScore() : null;
+    }
+
+    @JsonProperty("childName")
     public String getChildName() {
         if (child != null && child.getHouseholdMember() != null && child.getHouseholdMember().getName() != null) {
             return child.getHouseholdMember().getName();
@@ -65,7 +100,7 @@ public class Referral extends BaseEntity {
         return "Child";
     }
 
-    @com.fasterxml.jackson.annotation.JsonProperty("riskLevel")
+    @JsonProperty("riskLevel")
     public String getRiskLevel() {
         if (child != null && child.getRiskLevel() != null) {
             return child.getRiskLevel();
@@ -73,7 +108,7 @@ public class Referral extends BaseEntity {
         return "CRITICAL";
     }
 
-    @com.fasterxml.jackson.annotation.JsonProperty("village")
+    @JsonProperty("village")
     public String getVillage() {
         if (child != null && child.getHouseholdMember() != null && child.getHouseholdMember().getHousehold() != null) {
             return child.getHouseholdMember().getHousehold().getAddress();

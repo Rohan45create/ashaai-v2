@@ -19,8 +19,8 @@ public class SurveyTemplate extends BaseEntity {
     @Column(name = "module_key", unique = true)
     private String moduleKey;
 
-    @ManyToOne
-    @JoinColumn(name = "created_by", nullable = false)
+    @ManyToOne(fetch = jakarta.persistence.FetchType.LAZY)
+    @JoinColumn(name = "created_by")
     private AshaHead createdBy;
 
     @JdbcTypeCode(SqlTypes.JSON)

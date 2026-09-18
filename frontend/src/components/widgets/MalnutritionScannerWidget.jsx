@@ -214,25 +214,6 @@ export default function MalnutritionScannerWidget({ onGradeConfirmed, prefillDat
     }
   };
 
-  const handleGenerateReferral = async () => {
-    try {
-      const childName = prefillData?.child_name || 'Unknown Child';
-      await apiFetch('/api/referrals', {
-        method: 'POST',
-        body: JSON.stringify({
-          reason: `Severe Acute Malnutrition (SAM) — AI Visual Scan (${gradeResult?.confidence ?? '?'}% confidence) for ${childName}`,
-          status: 'Pending',
-          referredDate: new Date().toISOString().split('T')[0] + 'T00:00:00Z',
-        }),
-      });
-
-      setReferralSent(true);
-    } catch (err) {
-      console.error(err);
-      alert('Failed to generate referral. Please try again.');
-    }
-  };
-
   const displayGrade = correctedGrade || gradeResult?.grade;
   const cfg = displayGrade ? (GRADE_CONFIG[displayGrade] || GRADE_CONFIG.NORMAL) : null;
 

@@ -171,7 +171,7 @@ const CoverageMap = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {villages.length === 0 && (
           <p className="text-[#5F5E5A] p-4 col-span-3">
-            {tx('No household data found. Submit some Family Survey records first, or check that ashaIds match Firestore.')}
+            {tx('No household data found. Submit some Family Survey records first.')}
           </p>
         )}
         {villages.map(v => (

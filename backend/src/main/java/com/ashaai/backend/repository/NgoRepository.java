@@ -8,4 +8,5 @@ import java.util.UUID;
 
 @Repository
 public interface NgoRepository extends JpaRepository<Ngo, UUID> {
+    java.util.Optional<Ngo> findByContactEmail(String contactEmail);
 }

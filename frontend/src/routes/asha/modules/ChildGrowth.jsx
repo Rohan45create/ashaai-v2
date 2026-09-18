@@ -180,23 +180,29 @@ export default function ChildGrowth() {
     }
   };
 
-  const handleGenerateReferral = async () => {
-    try {
-      const childName = prefillData?.child_name || 'Unknown Child';
-      await apiFetch('/api/referrals', {
-        method: 'POST',
-        body: JSON.stringify({
-          reason: `Severe Acute Malnutrition (SAM) — AI Visual Scan (${gradeResult?.confidence ?? '?'}% confidence) for ${childName}`,
-          status: 'Pending',
-          referredDate: new Date().toISOString().split('T')[0] + 'T00:00:00Z',
-        }),
-      });
+  const handleSubmit = async (formData) => {
+    const resolvedAshaId = localStorage.getItem('ashaId') || user?.uid;
+    const resolvedHouseholdId = linkageConfirmedData?.household_id || formData.household_id || prefillData?._prefill_household_id || null;
+    const resolvedMemberId = linkageConfirmedData?.member_id || prefillData?._prefill_member_id || formData.household_member_id || null;
 
-      setReferralSent(true);
-    } catch (err) {
-      console.error(err);
-      alert('Failed to generate referral. Please try again.');
+    const payload = {
+      moduleKey: 'child_growth',
+      householdId: resolvedHouseholdId,
+      householdMemberId: resolvedMemberId,
+      ashaId: resolvedAshaId,
+      referredToNrc: formData.referred_to_nrc === true || formData.referred_to_nrc === 'true',
+      data: formData,
+    };
+
+    const result = await apiFetch('/api/surveySubmissions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    if (linkageConfirmedData && result) {
+      await handleAfterSubmit(result.id || result.uuid);
     }
+    return result;
   };
 
   return (
@@ -251,6 +257,7 @@ export default function ChildGrowth() {
         fields={FIELDS}
         initialValues={prefillData}
         onFormChange={setPrefillData}
+        onSubmit={handleSubmit}
         showAadhaar={hasParents}
         aadhaarPersonLabel="Child / बालक"
         onAadhaarScanned={handleAadhaarEntered}

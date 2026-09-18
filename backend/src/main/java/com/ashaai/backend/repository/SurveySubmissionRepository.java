@@ -8,4 +8,5 @@ import java.util.UUID;
 
 @Repository
 public interface SurveySubmissionRepository extends JpaRepository<SurveySubmission, UUID> {
+    java.util.List<SurveySubmission> findByAsha_Id(UUID ashaId);
 }

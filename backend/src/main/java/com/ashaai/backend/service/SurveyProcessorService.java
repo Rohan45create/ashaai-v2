@@ -31,6 +31,7 @@ public class SurveyProcessorService {
     private final AshaRepository ashaRepository;
     private final LinkageService linkageService;
     private final ObjectMapper objectMapper;
+    private final VisitRepository visitRepository;
 
     public SurveyProcessorService(
             PregnancyRepository pregnancyRepository,
@@ -42,7 +43,8 @@ public class SurveyProcessorService {
             ReferralRepository referralRepository,
             AshaRepository ashaRepository,
             LinkageService linkageService,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            VisitRepository visitRepository
     ) {
         this.pregnancyRepository = pregnancyRepository;
         this.surveySubmissionRepository = surveySubmissionRepository;
@@ -54,6 +56,7 @@ public class SurveyProcessorService {
         this.ashaRepository = ashaRepository;
         this.linkageService = linkageService;
         this.objectMapper = objectMapper;
+        this.visitRepository = visitRepository;
     }
 
     @Transactional
@@ -167,22 +170,44 @@ public class SurveyProcessorService {
             }
         }
 
-        // 6. If referred_to_nrc is true, insert referral and update child in the SAME transaction
-        if (referredToNrc) {
-            createNrcReferralInternal(submission, template, household, asha, dto.getHouseholdMemberId(), dataMap);
+        // 6. Module-specific normalization & decomposition into real tables
+        String moduleKey = dto.getModuleKey();
+        if (moduleKey == null && template != null) {
+            moduleKey = template.getModuleKey();
+        }
+
+        boolean isChildGrowth = "child_growth".equalsIgnoreCase(moduleKey)
+                || (template != null && "child_growth".equalsIgnoreCase(template.getModuleKey()))
+                || (template != null && "Child Growth".equalsIgnoreCase(template.getNameEn()));
+
+        if (isChildGrowth) {
+            processChildGrowthSubmission(submission, template, household, asha, dto.getHouseholdMemberId(), dataMap, referredToNrc);
+        } else if (referredToNrc) {
+            processChildGrowthSubmission(submission, template, household, asha, dto.getHouseholdMemberId(), dataMap, true);
         }
 
         return submission;
     }
 
-    private void createNrcReferralInternal(
+    private void processChildGrowthSubmission(
             SurveySubmission submission,
             SurveyTemplate template,
             Household household,
             Asha asha,
             UUID explicitMemberId,
-            Map<String, Object> dataMap
+            Map<String, Object> dataMap,
+            boolean referredToNrc
     ) {
+        // Fallback: If household is null and ASHA is known, resolve ASHA's first household
+        if (household == null && asha != null) {
+            List<Household> ashaHouseholds = householdRepository.findAll().stream()
+                    .filter(h -> h.getAsha() != null && h.getAsha().getId().equals(asha.getId()))
+                    .toList();
+            if (!ashaHouseholds.isEmpty()) {
+                household = ashaHouseholds.get(0);
+            }
+        }
+
         // Resolve HouseholdMember
         HouseholdMember member = null;
         UUID memberId = explicitMemberId;
@@ -229,9 +254,12 @@ public class SurveyProcessorService {
             child = new Child();
             child.setHouseholdMember(member);
             child.setAsha(asha);
+            child.setIsOrphan(false);
+            child.setHasParents(true);
+            child.setCreatedAt(OffsetDateTime.now());
         }
 
-        String gradeStr = dataMap.get("malnutritionGrade") != null ? String.valueOf(dataMap.get("malnutritionGrade")) : "SAM";
+        String gradeStr = dataMap.get("malnutritionGrade") != null ? String.valueOf(dataMap.get("malnutritionGrade")) : "Normal";
         boolean isSam = "RED".equalsIgnoreCase(gradeStr) || "SAM".equalsIgnoreCase(gradeStr);
         boolean isMam = "YELLOW".equalsIgnoreCase(gradeStr) || "MAM".equalsIgnoreCase(gradeStr);
         boolean isNormal = "NORMAL".equalsIgnoreCase(gradeStr) || "GREEN".equalsIgnoreCase(gradeStr);
@@ -266,51 +294,73 @@ public class SurveyProcessorService {
                 child.setRiskPrimaryDriver("Moderate acute malnutrition");
                 child.setRiskRecommendedAction("Supplementary feeding + NRC follow-up");
             } else {
-                child.setMalnutritionGrade("NORMAL");
+                child.setMalnutritionGrade("Normal");
                 child.setRiskLevel("LOW");
                 child.setRiskScore(15);
                 child.setRiskPrimaryDriver("Normal growth parameters");
                 child.setRiskRecommendedAction("Routine monitoring");
             }
-            child.setNrcReferralStatus("pending");
+            child.setNrcReferralStatus(referredToNrc ? "pending" : null);
             child.setLastVisitDate(LocalDate.now());
             child.setRiskUpdatedAt(OffsetDateTime.now());
+            child.setUpdatedAt(OffsetDateTime.now());
             child = childRepository.save(child);
-        }
+            log.info("event=child_growth_normalized child_id={} member_id={} grade={} risk_level={}",
+                    child.getId(), member.getId(), child.getMalnutritionGrade(), child.getRiskLevel());
 
-        // Build Referral entity
-        Referral referral = new Referral();
-        if (child != null) {
-            referral.setChild(child);
-        }
-        if (member != null) {
-            referral.setHouseholdMember(member);
-        }
-        referral.setAsha(asha);
-
-        String confidenceNote = "";
-        if (dataMap.get("malnutrition_report") instanceof Map<?, ?> reportMap) {
-            Object conf = reportMap.get("confidence");
-            if (conf != null) {
-                confidenceNote = " (" + conf + "% confidence)";
+            // Always record a Visit for this child growth measurement
+            Visit visit = new Visit();
+            visit.setChild(child);
+            visit.setAsha(asha);
+            visit.setVisitDate(LocalDate.now());
+            visit.setWeightKg(child.getCurrentWeightKg());
+            visit.setHeightCm(child.getCurrentHeightCm());
+            visit.setMuacMm(child.getMuacMm());
+            if (dataMap.get("illness_signs") != null) {
+                visit.setNotes(String.valueOf(dataMap.get("illness_signs")));
             }
+            visit.setActionTaken(referredToNrc ? "Referred to NRC" : "Routine growth monitoring");
+            visit.setSource("manual");
+            visit.setCreatedAt(OffsetDateTime.now());
+            visitRepository.save(visit);
+            log.info("event=visit_recorded visit_id={} child_id={} asha_id={}", visit.getId(), child.getId(), asha != null ? asha.getId() : null);
         }
 
-        String reason;
-        if (isSam) {
-            reason = "Severe Acute Malnutrition (SAM)" + confidenceNote + " — referred via malnutrition scanner";
-        } else if (isMam) {
-            reason = "Moderate Acute Malnutrition (MAM)" + confidenceNote + " — referred via malnutrition scanner";
-        } else {
-            reason = "Malnutrition (" + gradeStr + ")" + confidenceNote + " — referred via malnutrition scanner";
+        // Build Referral entity only if referredToNrc is true
+        if (referredToNrc) {
+            Referral referral = new Referral();
+            if (child != null) {
+                referral.setChild(child);
+            }
+            if (member != null) {
+                referral.setHouseholdMember(member);
+            }
+            referral.setAsha(asha);
+
+            String confidenceNote = "";
+            if (dataMap.get("malnutrition_report") instanceof Map<?, ?> reportMap) {
+                Object conf = reportMap.get("confidence");
+                if (conf != null) {
+                    confidenceNote = " (" + conf + "% confidence)";
+                }
+            }
+
+            String reason;
+            if (isSam) {
+                reason = "Severe Acute Malnutrition (SAM)" + confidenceNote + " — referred via malnutrition scanner";
+            } else if (isMam) {
+                reason = "Moderate Acute Malnutrition (MAM)" + confidenceNote + " — referred via malnutrition scanner";
+            } else {
+                reason = "Malnutrition (" + gradeStr + ")" + confidenceNote + " — referred via malnutrition scanner";
+            }
+
+            referral.setReason(reason);
+            referral.setStatus("pending");
+            referral.setReferredDate(OffsetDateTime.now());
+
+            referralRepository.save(referral);
+            log.info("event=nrc_referral_created referral_id={} child_id={} member_id={} asha_id={}",
+                    referral.getId(), child != null ? child.getId() : null, member != null ? member.getId() : null, asha != null ? asha.getId() : null);
         }
-
-        referral.setReason(reason);
-        referral.setStatus("pending");
-        referral.setReferredDate(OffsetDateTime.now());
-
-        referralRepository.save(referral);
-        log.info("event=nrc_referral_created referral_id={} child_id={} member_id={} asha_id={}",
-                referral.getId(), child != null ? child.getId() : null, member != null ? member.getId() : null, asha != null ? asha.getId() : null);
     }
 }

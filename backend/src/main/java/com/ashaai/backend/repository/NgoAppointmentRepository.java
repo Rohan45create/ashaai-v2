@@ -8,4 +8,5 @@ import java.util.UUID;
 
 @Repository
 public interface NgoAppointmentRepository extends JpaRepository<NgoAppointment, UUID> {
+    java.util.List<NgoAppointment> findByNgo_Id(UUID ngoId);
 }

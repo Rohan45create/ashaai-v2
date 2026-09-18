@@ -13,16 +13,16 @@ import java.time.OffsetDateTime;
 @Table(name = "survey_submissions")
 public class SurveySubmission extends BaseEntity {
 
-    @ManyToOne
-    @JoinColumn(name = "template_id", nullable = false)
+    @ManyToOne(fetch = jakarta.persistence.FetchType.LAZY)
+    @JoinColumn(name = "template_id")
     private SurveyTemplate template;
 
-    @ManyToOne
+    @ManyToOne(fetch = jakarta.persistence.FetchType.LAZY)
     @JoinColumn(name = "household_id")
     private Household household;
 
-    @ManyToOne
-    @JoinColumn(name = "asha_id", nullable = false)
+    @ManyToOne(fetch = jakarta.persistence.FetchType.LAZY)
+    @JoinColumn(name = "asha_id")
     private Asha asha;
 
     @JdbcTypeCode(SqlTypes.JSON)

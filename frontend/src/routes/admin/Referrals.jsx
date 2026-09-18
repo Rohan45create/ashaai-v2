@@ -35,7 +35,7 @@ const RISK_CONFIG = {
 };
 
 // ─── Admin review modal ───────────────────────────────────────────────────────
-const ReviewModal = ({ referral, onClose }) => {
+const ReviewModal = ({ referral, onClose, onUpdated }) => {
   const [status,  setStatus]  = useState(referral.status  || 'Pending');
   const [nrcName, setNrcName] = useState(referral.nrcName || '');
   const [notes,   setNotes]   = useState(referral.notes   || '');
@@ -62,10 +62,13 @@ const ReviewModal = ({ referral, onClose }) => {
         nrcName:   nrcName || null,
         notes:     notes   || null,
       };
-      await apiFetch(`/api/referrals/${referral.id}`, {
+      const res = await apiFetch(`/api/referrals/${referral.id}`, {
         method: 'PUT',
         body: JSON.stringify(payload)
       });
+      if (onUpdated) {
+        onUpdated(res || { ...referral, ...payload });
+      }
       onClose();
     } catch (e) {
       console.error('[Referrals] update error:', e);
@@ -109,7 +112,7 @@ const ReviewModal = ({ referral, onClose }) => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
           <div>
             <h3 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A18' }}>{tx('Review NRC Referral')}</h3>
-            <p style={{ fontSize: '13px', color: '#777' }}>{tx('Submitted by ASHA')}: <strong>{referral.ashaId}</strong></p>
+            <p style={{ fontSize: '13px', color: '#777' }}>{tx('Submitted by ASHA')}: <strong>{referral.ashaName || referral.ashaId}</strong></p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#888' }}><span className="material-symbols-outlined">close</span></button>
         </div>
@@ -444,7 +447,7 @@ export default function Referrals() {
                   padding: '8px 12px', marginBottom: '12px',
                   fontSize: '12px', color: '#666',
                 }}>
-                  <span><span className="material-symbols-outlined" style={{fontSize: '14px', verticalAlign: 'middle'}}>medical_services</span> <strong>{r.ashaId}</strong></span>
+                  <span><span className="material-symbols-outlined" style={{fontSize: '14px', verticalAlign: 'middle'}}>medical_services</span> <strong>{r.ashaName || r.ashaId}</strong></span>
                   {r.nrcName && <span>&middot; <span className="material-symbols-outlined" style={{fontSize: '14px', verticalAlign: 'middle'}}>local_hospital</span> <strong>{r.nrcName}</strong></span>}
                   {r.riskScore && <span>· Score: <strong style={{ color: rCfg.color }}>{r.riskScore}/100</strong></span>}
                 </div>
@@ -486,6 +489,9 @@ export default function Referrals() {
         <ReviewModal
           referral={reviewing}
           onClose={() => setReviewing(null)}
+          onUpdated={(updatedRef) => {
+            setReferrals(prev => prev.map(r => r.id === updatedRef.id ? { ...r, ...updatedRef } : r));
+          }}
         />
       )}
     </div>

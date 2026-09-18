@@ -48,4 +48,16 @@ public class Household extends BaseEntity {
 
     public String getWaterSource() { return waterSource; }
     public void setWaterSource(String waterSource) { this.waterSource = waterSource; }
+
+    @jakarta.persistence.Column(name = "created_at")
+    private java.time.OffsetDateTime createdAt;
+
+    @jakarta.persistence.Column(name = "updated_at")
+    private java.time.OffsetDateTime updatedAt;
+
+    public java.time.OffsetDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(java.time.OffsetDateTime createdAt) { this.createdAt = createdAt; }
+
+    public java.time.OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(java.time.OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

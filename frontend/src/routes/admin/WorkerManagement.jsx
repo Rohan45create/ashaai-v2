@@ -254,16 +254,20 @@ export default React.memo(function WorkerManagement() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-center text-sm text-[#5F5E5A] hidden lg:table-cell">
-                  {w.lastActive ? formatDistanceToNow(w.lastActive, { addSuffix: true }) : 'Never'}
+                  {w.lastActive ? formatDistanceToNow(new Date(w.lastActive), { addSuffix: true }) : 'Never'}
                 </td>
                 <td className="px-4 py-3 text-center font-bold">{w.submissionsThisMonth}</td>
                 <td className="px-4 py-3 text-center hidden lg:table-cell">
-                  <div className="flex items-center justify-center gap-2">
-                    <div className="w-12 h-2 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-[#1D9E75] rounded-full" style={{width: `${w.coveragePercent}%`}} />
+                  {w.coveragePercent != null ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="w-12 h-2 bg-gray-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-[#1D9E75] rounded-full" style={{width: `${w.coveragePercent}%`}} />
+                      </div>
+                      <span className="text-xs font-medium">{w.coveragePercent}%</span>
                     </div>
-                    <span className="text-xs font-medium">{w.coveragePercent}%</span>
-                  </div>
+                  ) : (
+                    <span className="text-xs text-[#5F5E5A] font-medium" title="Coverage target not configured">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-center">
                   <div className="flex items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>

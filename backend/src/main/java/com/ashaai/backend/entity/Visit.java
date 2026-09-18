@@ -56,4 +56,10 @@ public class Visit extends BaseEntity {
     public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
+
+    @jakarta.persistence.Column(name = "created_at")
+    private java.time.OffsetDateTime createdAt;
+
+    public java.time.OffsetDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(java.time.OffsetDateTime createdAt) { this.createdAt = createdAt; }
 }

@@ -330,8 +330,8 @@ export default function AdminDashboard() {
                   <tr key={w.id} className="border-b border-[#D3D1C7] last:border-0 hover:bg-gray-50">
                     <td className="p-3 text-sm font-medium text-[#1A1A18]">{w.name || w.id}</td>
                     <td className="p-3 text-sm text-[#5F5E5A]">{w.village || '-'}</td>
-                    <td className="p-3 text-sm text-[#5F5E5A]">{w.coverage_percent || 0}%</td>
-                    <td className="p-3 text-sm text-[#5F5E5A]">{w.submissions_this_month || 0}</td>
+                    <td className="p-3 text-sm text-[#5F5E5A]">{(w.coverage_percent != null || w.coveragePercent != null) ? `${w.coverage_percent ?? w.coveragePercent}%` : '—'}</td>
+                    <td className="p-3 text-sm text-[#5F5E5A]">{w.submissions_this_month ?? w.submissionsThisMonth ?? 0}</td>
                     <td className="p-3 text-sm">
                       {w.isActive ? (
                         <span className="px-2 py-1 bg-[#EAF3DE] text-[#085041] rounded-lg text-xs font-bold border border-[#1D9E75]">Active</span>

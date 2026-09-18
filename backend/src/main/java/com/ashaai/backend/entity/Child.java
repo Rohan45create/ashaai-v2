@@ -1,5 +1,7 @@
 package com.ashaai.backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.Entity;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -11,6 +13,7 @@ import java.time.OffsetDateTime;
 
 @Entity
 @Table(name = "children")
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class Child extends BaseEntity {
 
     @ManyToOne
@@ -36,8 +39,8 @@ public class Child extends BaseEntity {
 
     private Integer ageMonths;
     private LocalDate lastVisitDate;
-    private Boolean isOrphan;
-    private Boolean hasParents;
+    private Boolean isOrphan = false;
+    private Boolean hasParents = true;
 
     private Integer riskScore;
     private String riskLevel;
@@ -81,11 +84,11 @@ public class Child extends BaseEntity {
     public LocalDate getLastVisitDate() { return lastVisitDate; }
     public void setLastVisitDate(LocalDate lastVisitDate) { this.lastVisitDate = lastVisitDate; }
 
-    public Boolean getIsOrphan() { return isOrphan; }
-    public void setIsOrphan(Boolean isOrphan) { this.isOrphan = isOrphan; }
+    public Boolean getIsOrphan() { return isOrphan != null ? isOrphan : false; }
+    public void setIsOrphan(Boolean isOrphan) { this.isOrphan = isOrphan != null ? isOrphan : false; }
 
-    public Boolean getHasParents() { return hasParents; }
-    public void setHasParents(Boolean hasParents) { this.hasParents = hasParents; }
+    public Boolean getHasParents() { return hasParents != null ? hasParents : true; }
+    public void setHasParents(Boolean hasParents) { this.hasParents = hasParents != null ? hasParents : true; }
 
     public Integer getRiskScore() { return riskScore; }
     public void setRiskScore(Integer riskScore) { this.riskScore = riskScore; }
@@ -101,4 +104,31 @@ public class Child extends BaseEntity {
 
     public OffsetDateTime getRiskUpdatedAt() { return riskUpdatedAt; }
     public void setRiskUpdatedAt(OffsetDateTime riskUpdatedAt) { this.riskUpdatedAt = riskUpdatedAt; }
+
+    @jakarta.persistence.Column(name = "created_at")
+    private OffsetDateTime createdAt;
+
+    @jakarta.persistence.Column(name = "updated_at")
+    private OffsetDateTime updatedAt;
+
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
+
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    @JsonProperty("childName")
+    public String getChildName() {
+        return householdMember != null ? householdMember.getName() : null;
+    }
+
+    @JsonProperty("gender")
+    public String getGender() {
+        return householdMember != null ? householdMember.getGender() : null;
+    }
+
+    @JsonProperty("dateOfBirth")
+    public LocalDate getDateOfBirth() {
+        return householdMember != null ? householdMember.getDateOfBirth() : null;
+    }
 }

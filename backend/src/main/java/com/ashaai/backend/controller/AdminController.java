@@ -81,9 +81,14 @@ public class AdminController {
         java.util.Map<String, Object> result = new java.util.HashMap<>();
         result.put("workerCount", workerCount);
         result.put("criticalCases", criticalCases);
-        result.put("totalFamilies", 0); // computed from household count if needed
-        result.put("activeToday", workers.stream().filter(w -> w.get("lastActive") != null).count());
-        result.put("pendingReviews", 0); // would need pendingReviewRepository injection
+        result.put("totalFamilies", adminService.getTotalFamilies(headId));
+        result.put("pendingReviews", adminService.getPendingReviewsCount());
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.util.Date todayStart = java.util.Date.from(today.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant());
+        long activeToday = workers.stream()
+            .filter(w -> w.get("lastActive") instanceof java.util.Date d && !d.before(todayStart))
+            .count();
+        result.put("activeToday", activeToday);
         result.put("workerActivityChart", workerActivityChart);
         result.put("riskChart", java.util.List.of(
             java.util.Map.of("label", "CRITICAL", "value", criticalCases),
@@ -137,5 +142,16 @@ public class AdminController {
         response.put("id", newAsha.getId().toString());
         response.put("name", newAsha.getName());
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/map-data")
+    public ResponseEntity<java.util.Map<String, Object>> getMapData(
+            @org.springframework.web.bind.annotation.RequestParam(value = "headId", required = false) java.util.UUID headId,
+            org.springframework.security.core.Authentication authentication) {
+        com.ashaai.backend.security.AshaAuthenticationToken auth =
+            (com.ashaai.backend.security.AshaAuthenticationToken) authentication;
+        java.util.UUID resolvedHeadId = headId != null ? headId : auth.getAshaHeadId();
+        if (resolvedHeadId == null) return ResponseEntity.status(403).build();
+        return ResponseEntity.ok(adminService.getMapData(resolvedHeadId));
     }
 }
