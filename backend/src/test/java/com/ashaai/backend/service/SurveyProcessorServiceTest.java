@@ -24,6 +24,7 @@ class SurveyProcessorServiceTest {
     private HouseholdMemberRepository memberRepository;
     private ChildRepository childRepository;
     private ReferralRepository referralRepository;
+    private VisitRepository visitRepository;
     private AshaRepository ashaRepository;
     private LinkageService linkageService;
     private ObjectMapper objectMapper;
@@ -39,6 +40,7 @@ class SurveyProcessorServiceTest {
         memberRepository = mock(HouseholdMemberRepository.class);
         childRepository = mock(ChildRepository.class);
         referralRepository = mock(ReferralRepository.class);
+        visitRepository = mock(VisitRepository.class);
         ashaRepository = mock(AshaRepository.class);
         linkageService = mock(LinkageService.class);
         objectMapper = new ObjectMapper();
@@ -53,7 +55,8 @@ class SurveyProcessorServiceTest {
                 referralRepository,
                 ashaRepository,
                 linkageService,
-                objectMapper
+                objectMapper,
+                visitRepository
         );
     }
 
@@ -148,13 +151,51 @@ class SurveyProcessorServiceTest {
         assertEquals("SAM", updatedChild.getMalnutritionGrade());
         assertEquals("CRITICAL", updatedChild.getRiskLevel());
         assertEquals("pending", updatedChild.getNrcReferralStatus());
+
+        // Verify Visit was saved in the same transaction
+        ArgumentCaptor<Visit> visitCaptor = ArgumentCaptor.forClass(Visit.class);
+        verify(visitRepository, times(1)).save(visitCaptor.capture());
+        Visit savedVisit = visitCaptor.getValue();
+        assertNotNull(savedVisit);
+        assertEquals(child, savedVisit.getChild());
+        assertEquals(asha, savedVisit.getAsha());
+        assertEquals("Referred to NRC", savedVisit.getActionTaken());
     }
 
     @Test
-    @DisplayName("Submitting survey with referred_to_nrc=false does NOT create a referral")
+    @DisplayName("Submitting child_growth survey with referred_to_nrc=false updates child and records visit without referral")
     void testChildGrowthSubmissionWithoutNrcReferral() {
         UUID ashaId = UUID.randomUUID();
         UUID templateId = UUID.randomUUID();
+        UUID householdId = UUID.randomUUID();
+        UUID memberId = UUID.randomUUID();
+        UUID childId = UUID.randomUUID();
+
+        Asha asha = new Asha();
+        asha.setId(ashaId);
+        when(ashaRepository.findById(ashaId)).thenReturn(Optional.of(asha));
+
+        SurveyTemplate template = new SurveyTemplate();
+        template.setId(templateId);
+        template.setModuleKey("child_growth");
+        when(surveyTemplateRepository.findById(templateId)).thenReturn(Optional.of(template));
+
+        Household household = new Household();
+        household.setId(householdId);
+        when(householdRepository.findById(householdId)).thenReturn(Optional.of(household));
+
+        HouseholdMember member = new HouseholdMember();
+        member.setId(memberId);
+        member.setName("Normal Child");
+        member.setHousehold(household);
+        when(memberRepository.findById(memberId)).thenReturn(Optional.of(member));
+
+        Child child = new Child();
+        child.setId(childId);
+        child.setHouseholdMember(member);
+        child.setAsha(asha);
+        when(childRepository.findByHouseholdMember_Id(memberId)).thenReturn(Optional.of(child));
+        when(childRepository.save(any(Child.class))).thenAnswer(i -> i.getArgument(0));
 
         when(surveySubmissionRepository.save(any(SurveySubmission.class))).thenAnswer(i -> {
             SurveySubmission s = i.getArgument(0);
@@ -167,10 +208,13 @@ class SurveyProcessorServiceTest {
         data.put("weight_kg", 9.5);
         data.put("malnutritionGrade", "NORMAL");
         data.put("referred_to_nrc", false);
+        data.put("_prefill_member_id", memberId.toString());
 
         SurveySubmissionDto dto = new SurveySubmissionDto();
         dto.setTemplateId(templateId);
         dto.setModuleKey("child_growth");
+        dto.setHouseholdId(householdId);
+        dto.setHouseholdMemberId(memberId);
         dto.setAshaId(ashaId);
         dto.setData(data);
         dto.setReferredToNrc(false);
@@ -180,5 +224,21 @@ class SurveyProcessorServiceTest {
         assertNotNull(result);
         verify(surveySubmissionRepository, times(1)).save(any(SurveySubmission.class));
         verify(referralRepository, never()).save(any(Referral.class));
+
+        // Verify Child was updated
+        ArgumentCaptor<Child> childCaptor = ArgumentCaptor.forClass(Child.class);
+        verify(childRepository, times(1)).save(childCaptor.capture());
+        Child updatedChild = childCaptor.getValue();
+        assertEquals("Normal", updatedChild.getMalnutritionGrade());
+        assertEquals("LOW", updatedChild.getRiskLevel());
+        assertNull(updatedChild.getNrcReferralStatus());
+
+        // Verify Visit was saved
+        ArgumentCaptor<Visit> visitCaptor = ArgumentCaptor.forClass(Visit.class);
+        verify(visitRepository, times(1)).save(visitCaptor.capture());
+        Visit savedVisit = visitCaptor.getValue();
+        assertNotNull(savedVisit);
+        assertEquals(child, savedVisit.getChild());
+        assertEquals("Routine growth monitoring", savedVisit.getActionTaken());
     }
 }
