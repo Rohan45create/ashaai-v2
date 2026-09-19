@@ -42,6 +42,11 @@ const ReviewModal = ({ referral, onClose, onUpdated }) => {
   const [saving,  setSaving]  = useState(false);
   const [error,   setError]   = useState('');
   const [childData, setChildData] = useState(null);
+  const [ngos, setNgos] = useState([]);
+  const [bookNgo, setBookNgo] = useState(false);
+  const [ngoId, setNgoId] = useState('');
+  const [apptDate, setApptDate] = useState('');
+  const [apptTime, setApptTime] = useState('10:00');
   const tx = useTx();
 
   useEffect(() => {
@@ -50,6 +55,9 @@ const ReviewModal = ({ referral, onClose, onUpdated }) => {
         .then(data => setChildData(data))
         .catch(e => console.warn('[ReviewModal] failed to fetch child data', e));
     }
+    apiFetch('/api/ngos')
+      .then(data => setNgos(data || []))
+      .catch(e => console.warn('[ReviewModal] failed to fetch NGOs', e));
   }, [referral.childId]);
 
   const save = async () => {
@@ -66,6 +74,19 @@ const ReviewModal = ({ referral, onClose, onUpdated }) => {
         method: 'PUT',
         body: JSON.stringify(payload)
       });
+      
+      if (bookNgo && ngoId && apptDate) {
+        await apiFetch('/api/appointments/book-referral', {
+          method: 'POST',
+          body: JSON.stringify({
+            ngoId,
+            referralId: referral.id,
+            scheduledDate: apptDate,
+            scheduledTime: apptTime
+          })
+        });
+      }
+      
       if (onUpdated) {
         onUpdated(res || { ...referral, ...payload });
       }
@@ -191,6 +212,36 @@ const ReviewModal = ({ referral, onClose, onUpdated }) => {
             boxSizing: 'border-box',
           }}
         />
+
+        {/* NGO Appointment Booking Toggle */}
+        <div style={{ marginBottom: '16px', background: '#F5F4EF', padding: '12px', borderRadius: '10px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: '700', fontSize: '13px', color: '#1A1A18' }}>
+            <input type="checkbox" checked={bookNgo} onChange={e => setBookNgo(e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#1D9E75' }} />
+            <span className="material-symbols-outlined" style={{fontSize: '18px', color: '#1D9E75'}}>event</span> {tx('Also Book NGO Visit for ASHA')}
+          </label>
+          
+          {bookNgo && (
+            <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#555', marginBottom: '4px' }}>{tx('Select NGO')} *</label>
+                <select value={ngoId} onChange={e => setNgoId(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #D3D1C7' }}>
+                  <option value="">{tx('Select...')}</option>
+                  {ngos.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#555', marginBottom: '4px' }}>{tx('Date')} *</label>
+                  <input type="date" value={apptDate} min={new Date().toISOString().split('T')[0]} onChange={e => setApptDate(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #D3D1C7', boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ width: '100px' }}>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#555', marginBottom: '4px' }}>{tx('Time')} *</label>
+                  <input type="time" value={apptTime} onChange={e => setApptTime(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #D3D1C7', boxSizing: 'border-box' }} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Status selector */}
         <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#555', marginBottom: '8px', textTransform: 'uppercase' }}>

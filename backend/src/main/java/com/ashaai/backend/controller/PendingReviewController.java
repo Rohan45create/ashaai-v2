@@ -1,12 +1,13 @@
 package com.ashaai.backend.controller;
 
+import com.ashaai.backend.entity.Ngo;
 import com.ashaai.backend.entity.PendingReview;
+import com.ashaai.backend.repository.NgoRepository;
 import com.ashaai.backend.repository.PendingReviewRepository;
 import com.ashaai.backend.security.AshaAuthenticationToken;
 import com.ashaai.backend.service.AncFlaggingService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -20,29 +21,33 @@ public class PendingReviewController {
 
     private final PendingReviewRepository pendingReviewRepository;
     private final AncFlaggingService ancFlaggingService;
+    private final NgoRepository ngoRepository;
 
     public PendingReviewController(
             PendingReviewRepository pendingReviewRepository,
-            AncFlaggingService ancFlaggingService
+            AncFlaggingService ancFlaggingService,
+            NgoRepository ngoRepository
     ) {
         this.pendingReviewRepository = pendingReviewRepository;
         this.ancFlaggingService = ancFlaggingService;
+        this.ngoRepository = ngoRepository;
     }
 
     @GetMapping
-    public ResponseEntity<List<PendingReview>> getAll(org.springframework.security.core.Authentication authentication) { com.ashaai.backend.security.AshaAuthenticationToken auth = (com.ashaai.backend.security.AshaAuthenticationToken) authentication;
+    public ResponseEntity<List<PendingReview>> getAll(org.springframework.security.core.Authentication authentication) {
         return ResponseEntity.ok(pendingReviewRepository.findAll());
     }
 
     @PostMapping
-    public ResponseEntity<PendingReview> create(@RequestBody PendingReview entity, org.springframework.security.core.Authentication authentication) { com.ashaai.backend.security.AshaAuthenticationToken auth = (com.ashaai.backend.security.AshaAuthenticationToken) authentication;
+    public ResponseEntity<PendingReview> create(@RequestBody PendingReview entity, org.springframework.security.core.Authentication authentication) {
         return ResponseEntity.status(HttpStatus.CREATED).body(pendingReviewRepository.save(entity));
     }
 
     @PostMapping("/{id}/approve")
     public ResponseEntity<?> approveReview(
             @PathVariable UUID id,
-            org.springframework.security.core.Authentication authentication) { com.ashaai.backend.security.AshaAuthenticationToken auth = (com.ashaai.backend.security.AshaAuthenticationToken) authentication;
+            org.springframework.security.core.Authentication authentication) {
+        AshaAuthenticationToken auth = (AshaAuthenticationToken) authentication;
         Optional<PendingReview> reviewOpt = pendingReviewRepository.findById(id);
         if (reviewOpt.isEmpty()) {
             return ResponseEntity.notFound().build();
@@ -54,6 +59,15 @@ public class PendingReviewController {
 
         if ("pregnancies".equalsIgnoreCase(review.getTableName())) {
             ancFlaggingService.confirmHighRiskBySupervisor(id, supervisorId, true);
+        } else if ("ngos".equalsIgnoreCase(review.getTableName()) && review.getRecordId() != null) {
+            review.setStatus("CONFIRMED");
+            pendingReviewRepository.save(review);
+            Optional<Ngo> ngoOpt = ngoRepository.findById(review.getRecordId());
+            if (ngoOpt.isPresent()) {
+                Ngo ngo = ngoOpt.get();
+                ngo.setStatus("active");
+                ngoRepository.save(ngo);
+            }
         } else {
             review.setStatus("CONFIRMED");
             pendingReviewRepository.save(review);
@@ -65,7 +79,8 @@ public class PendingReviewController {
     public ResponseEntity<?> rejectReview(
             @PathVariable UUID id,
             @RequestBody(required = false) Map<String, String> body,
-            org.springframework.security.core.Authentication authentication) { com.ashaai.backend.security.AshaAuthenticationToken auth = (com.ashaai.backend.security.AshaAuthenticationToken) authentication;
+            org.springframework.security.core.Authentication authentication) {
+        AshaAuthenticationToken auth = (AshaAuthenticationToken) authentication;
         Optional<PendingReview> reviewOpt = pendingReviewRepository.findById(id);
         if (reviewOpt.isEmpty()) {
             return ResponseEntity.notFound().build();

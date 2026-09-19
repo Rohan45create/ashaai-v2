@@ -547,7 +547,7 @@ export default React.memo(function Home() {
         {/* NGO Visits merged into Upcoming Visits above */}
 
         {/* My Activity Section */}
-        <div>
+        <div className="pb-8">
           <h2 className="text-lg font-bold text-[#1A1A18] mb-3">{tx('My Activity')}</h2>
           {activityLoading ? (
              <div className="space-y-3">

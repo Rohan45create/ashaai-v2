@@ -14,11 +14,22 @@ spring:
     open-in-view: false
   flyway:
     enabled: false
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${GMAIL_SENDER_EMAIL:}
+    password: ${GMAIL_APP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
   servlet:
     multipart:
       max-file-size: 10MB
       max-request-size: 10MB
-  
 
 management:
   endpoints:
@@ -41,7 +52,9 @@ app:
   ngo:
     form-new-url: ${NGO_FORM_NEW_URL:placeholder}
     form-existing-url: ${NGO_FORM_EXISTING_URL:placeholder}
-    form-reschedule-url: ${NGO_FORM_RESCHEDULE_URL:placeholder}
+    form-reschedule-url: ${NGO_FORM_RESCHEDULE_URL:https://docs.google.com/forms/d/e/1FAIpQLScM_CLWtV5U2FvVp9qBFOKWwh_H79dOF67JUKLNVsUHAZMiIg/viewform}
+    form-reschedule-email-entry: ${NGO_RESCHEDULE_FORM_EMAIL_ENTRY:entry.1873215396}
+    form-reschedule-date-entry: ${NGO_RESCHEDULE_FORM_DATE_ENTRY:entry.677716065}
   ai-service:
     url: ${AI_SERVICE_URL:http://localhost:8000} 
 logging:

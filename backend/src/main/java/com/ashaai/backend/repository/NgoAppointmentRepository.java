@@ -9,4 +9,5 @@ import java.util.UUID;
 @Repository
 public interface NgoAppointmentRepository extends JpaRepository<NgoAppointment, UUID> {
     java.util.List<NgoAppointment> findByNgo_Id(UUID ngoId);
+    java.util.List<NgoAppointment> findByReferral_Asha_IdAndScheduledAtGreaterThanEqualAndStatusNotOrderByScheduledAtAsc(UUID ashaId, java.time.OffsetDateTime time, String status);
 }

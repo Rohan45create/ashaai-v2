@@ -144,6 +144,7 @@ export default function NGOManagement() {
               <thead>
                 <tr className="bg-gray-50 border-b border-[#D3D1C7]">
                   <th className="p-4 font-semibold text-[#5F5E5A]">NGO Name</th>
+                  <th className="p-4 font-semibold text-[#5F5E5A]">Status</th>
                   <th className="p-4 font-semibold text-[#5F5E5A]">Contact</th>
                   <th className="p-4 font-semibold text-[#5F5E5A]">Location</th>
                   <th className="p-4 font-semibold text-[#5F5E5A] text-right">Actions</th>
@@ -163,19 +164,52 @@ export default function NGOManagement() {
                               chevron_right
                             </span>
                           </button>
-                          <span className="font-bold text-[#1A1A18]">{ngo.name}</span>
+                          <div>
+                            <span className="font-bold text-[#1A1A18] block">{ngo.name}</span>
+                            {ngo.ngoType && <span className="text-xs text-[#5F5E5A]">{ngo.ngoType}</span>}
+                          </div>
                         </div>
                       </td>
                       <td className="p-4">
-                        <div className="flex items-center text-sm text-[#5F5E5A]">
-                          <span className="material-symbols-outlined text-[16px] mr-1">call</span> 
-                          {ngo.contact}
+                        {ngo.status === 'pending_approval' ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-[#FFF8E1] text-[#BA7517] border border-[#FFE082]">
+                            Pending Review
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-[#EAF3DE] text-[#27500A] border border-[#C0DD9D]">
+                            Active Partner
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        <div className="text-sm text-[#5F5E5A] space-y-0.5">
+                          {(ngo.contactPhone || ngo.contact) && (
+                            <div className="flex items-center">
+                              <span className="material-symbols-outlined text-[15px] mr-1.5 text-gray-400">call</span> 
+                              {ngo.contactPhone || ngo.contact}
+                            </div>
+                          )}
+                          {ngo.contactEmail && (
+                            <div className="flex items-center">
+                              <span className="material-symbols-outlined text-[15px] mr-1.5 text-gray-400">mail</span> 
+                              {ngo.contactEmail}
+                            </div>
+                          )}
+                          {ngo.contactPerson && (
+                            <div className="flex items-center text-xs text-gray-500">
+                              <span className="material-symbols-outlined text-[15px] mr-1.5 text-gray-400">person</span> 
+                              {ngo.contactPerson}
+                            </div>
+                          )}
+                          {!ngo.contactPhone && !ngo.contact && !ngo.contactEmail && !ngo.contactPerson && (
+                            <span className="text-xs text-gray-400 italic">No contact details</span>
+                          )}
                         </div>
                       </td>
                       <td className="p-4">
                         <div className="flex items-center text-sm text-[#5F5E5A]">
                           <span className="material-symbols-outlined text-[16px] mr-1">location_on</span> 
-                          {ngo.address}
+                          {[ngo.address, ngo.village, ngo.district].filter(Boolean).join(', ') || ngo.address || 'Address not specified'}
                         </div>
                         {(ngo.gpsLat && ngo.gpsLng) && (
                           <button 
@@ -187,12 +221,21 @@ export default function NGOManagement() {
                         )}
                       </td>
                       <td className="p-4 text-right">
-                        <button 
-                          onClick={() => { setSelectedNgo(ngo); setShowSchedule(true); }}
-                          className="bg-[#EAF3DE] text-[#27500A] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#D5E8C3] transition-colors"
-                        >
-                          Schedule Visit
-                        </button>
+                        {ngo.status === 'pending_approval' ? (
+                          <button 
+                            onClick={() => navigate('/admin/review')}
+                            className="bg-[#FFF8E1] text-[#BA7517] border border-[#FFE082] px-3 py-2 rounded-lg text-xs font-semibold hover:bg-[#FFECC0] transition-colors"
+                          >
+                            Review & Approve
+                          </button>
+                        ) : (
+                          <button 
+                            onClick={() => { setSelectedNgo(ngo); setShowSchedule(true); }}
+                            className="bg-[#EAF3DE] text-[#27500A] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#D5E8C3] transition-colors"
+                          >
+                            Schedule Visit
+                          </button>
+                        )}
                       </td>
                     </tr>
 

@@ -97,36 +97,164 @@ export default function PendingReview() {
       let allReviews = [];
 
       try {
-        const backendData = await apiFetch('/api/pendingReviews');
+        const [backendData, ngosList] = await Promise.all([
+          apiFetch('/api/pendingReviews'),
+          apiFetch('/api/ngos').catch(() => [])
+        ]);
+
+        const ngoMap = new Map();
+        if (Array.isArray(ngosList)) {
+          ngosList.forEach(n => {
+            if (n.id) ngoMap.set(String(n.id), n);
+            if (n.contactEmail) ngoMap.set(n.contactEmail.toLowerCase(), n);
+          });
+        }
+
+        const extractServiceInfo = (services, prefix) => {
+          if (!Array.isArray(services)) return null;
+          const found = services.find(s => typeof s === 'string' && s.toLowerCase().startsWith(prefix.toLowerCase() + ':'));
+          return found ? found.split(':')[1]?.trim() : null;
+        };
+
         if (Array.isArray(backendData)) {
           backendData.forEach(pr => {
             const statusLower = (pr.status || '').toLowerCase();
             if (statusLower === 'pending' || statusLower === 'pending_confirmation' || statusLower === 'pending_review') {
               const isCrossField = pr.tableName === 'cross_field_validation';
               const isPregnancy = pr.tableName === 'pregnancies';
-              allReviews.push({
-                id: `pg_${pr.id}`,
-                originalId: pr.id,
-                collection: pr.tableName || 'pending_reviews',
-                isBackendReview: true,
-                title: isCrossField 
-                  ? 'Cross-Field Logic Alert' 
-                  : isPregnancy 
-                  ? 'High-Risk ANC Flag' 
-                  : `Pending Review: ${pr.tableName || 'Record'}`,
-                worker: pr.flaggedBy ? String(pr.flaggedBy).substring(0, 8) : 'ASHA Worker',
-                village: 'Field Submissions',
-                type: isCrossField ? 'CROSS_FIELD_CONFLICT' : (isPregnancy ? 'CRITICAL_RISK' : 'EDIT_REVIEW'),
-                source: 'asha',
-                createdAt: pr.createdAt ? new Date(pr.createdAt) : new Date(),
-                confidence: null,
-                rawData: {
-                  anomalyReason: pr.reason,
-                  targetTable: pr.tableName,
-                  recordId: pr.recordId,
-                  status: pr.status,
+
+              let ngoData = null;
+              if (pr.reason && typeof pr.reason === 'string' && pr.reason.trim().startsWith('{')) {
+                try {
+                  ngoData = JSON.parse(pr.reason);
+                } catch (e) {}
+              }
+
+              const isNgoTable = pr.tableName === 'ngos' || pr.tableName === 'ngo_appointments' || (pr.tableName && pr.tableName.startsWith('ngo'));
+              const isNgoReason = typeof pr.reason === 'string' && (
+                pr.reason.includes('Google Form') ||
+                pr.reason.toLowerCase().includes('ngo') ||
+                (pr.reason.toLowerCase().includes('appointment') && isNgoTable)
+              );
+              const isNgo = isNgoTable || (ngoData && ngoData.source === 'ngo') || isNgoReason;
+
+              if (isNgo) {
+                // Resolve linked NGO from DB if available
+                const emailMatch = pr.reason?.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/);
+                const emailCandidate = ngoData?.ngoEmail || (emailMatch ? emailMatch[0] : null);
+                const linkedNgo = (pr.recordId && ngoMap.get(String(pr.recordId))) ||
+                                  (emailCandidate && ngoMap.get(emailCandidate.toLowerCase()));
+
+                let ngoType = ngoData?.type;
+                if (!ngoType) {
+                  const rLower = (pr.reason || '').toLowerCase();
+                  if (rLower.includes('appointment change') || rLower.includes('reschedule')) {
+                    ngoType = 'ngo_appointment_change';
+                  } else if (rLower.includes('support request') || rLower.includes('appointment') || pr.tableName === 'ngo_appointments') {
+                    ngoType = 'ngo_appointment';
+                  } else {
+                    ngoType = 'ngo_registration';
+                  }
                 }
-              });
+
+                let ngoName = ngoData?.ngoName;
+                if (!ngoName && linkedNgo) ngoName = linkedNgo.name;
+                if (!ngoName && pr.reason) {
+                  const nameMatch = pr.reason.match(/New NGO Registration via Google Form:\s*(.+)/i);
+                  if (nameMatch) ngoName = nameMatch[1].trim();
+                }
+                if (!ngoName) {
+                  ngoName = ngoType === 'ngo_registration' ? 'New NGO Applicant' : 'NGO Partner';
+                }
+
+                const finalEmail = ngoData?.ngoEmail || linkedNgo?.contactEmail || emailCandidate || '';
+                const finalPhone = ngoData?.contactPhone || linkedNgo?.contactPhone || '';
+                const finalVillage = ngoData?.village || linkedNgo?.village || extractServiceInfo(linkedNgo?.services, 'Village') || 'Partner Facility';
+                const finalDistrict = ngoData?.district || linkedNgo?.district || extractServiceInfo(linkedNgo?.services, 'District') || '';
+                const finalChildren = ngoData?.childrenCount || linkedNgo?.childrenCount || extractServiceInfo(linkedNgo?.services, 'Children') || '';
+                const finalNgoType = ngoData?.ngoType || linkedNgo?.ngoType || (linkedNgo?.services && linkedNgo.services[0]) || 'Child Health & Nutrition';
+
+                // Extract dates for appointment requests or reschedules from text if needed
+                const pref1Match = pr.reason?.match(/Date 1:\s*([^|\n]+)/i);
+                const pref2Match = pr.reason?.match(/Date 2:\s*([^|\n]+)/i);
+                const preferredDate1 = ngoData?.preferredDate1 || (pref1Match ? pref1Match[1].trim() : '');
+                const preferredDate2 = ngoData?.preferredDate2 || (pref2Match ? pref2Match[1].trim() : '');
+
+                // Extract message if plain text
+                let extractedMessage = ngoData?.message;
+                if (!extractedMessage && pr.reason) {
+                  if (pr.reason.includes('|')) {
+                    const parts = pr.reason.split('|').map(p => p.trim());
+                    extractedMessage = parts[parts.length - 1];
+                    if (extractedMessage.toLowerCase().startsWith('message:')) {
+                      extractedMessage = extractedMessage.substring(8).trim();
+                    }
+                  } else {
+                    extractedMessage = pr.reason;
+                  }
+                }
+
+                allReviews.push({
+                  id: `pg_${pr.id}`,
+                  originalId: pr.id,
+                  collection: 'ngos',
+                  isBackendReview: true,
+                  title: ngoType === 'ngo_registration' 
+                    ? `New NGO Registration: ${ngoName}`
+                    : ngoType === 'ngo_appointment_change'
+                    ? `Appointment Change Request: ${ngoName}`
+                    : `NGO Appointment Request: ${ngoName}`,
+                  worker: 'NGO Partner',
+                  village: finalVillage + (finalDistrict ? `, ${finalDistrict}` : ''),
+                  type: ngoType,
+                  source: 'ngo',
+                  createdAt: pr.createdAt ? new Date(pr.createdAt) : new Date(),
+                  confidence: null,
+                  rawData: {
+                    ...(ngoData || {}),
+                    ngoName,
+                    ngoEmail: finalEmail,
+                    contactPhone: finalPhone,
+                    village: finalVillage,
+                    district: finalDistrict,
+                    childrenCount: finalChildren,
+                    ngoType: finalNgoType,
+                    preferredDate1,
+                    preferredDate2,
+                    message: extractedMessage,
+                    anomalyReason: pr.reason,
+                    targetTable: pr.tableName,
+                    recordId: pr.recordId,
+                    status: pr.status,
+                    ngoId: ngoData?.ngoId || linkedNgo?.id || pr.recordId,
+                    currentAppointmentId: ngoData?.currentAppointmentId || (pr.tableName === 'ngo_appointments' ? pr.recordId : ''),
+                  }
+                });
+              } else {
+                allReviews.push({
+                  id: `pg_${pr.id}`,
+                  originalId: pr.id,
+                  collection: pr.tableName || 'pending_reviews',
+                  isBackendReview: true,
+                  title: isCrossField 
+                    ? 'Cross-Field Logic Alert' 
+                    : isPregnancy 
+                    ? 'High-Risk ANC Flag' 
+                    : `Pending Review: ${pr.tableName || 'Record'}`,
+                  worker: pr.flaggedBy ? String(pr.flaggedBy).substring(0, 8) : 'ASHA Worker',
+                  village: 'Field Submissions',
+                  type: isCrossField ? 'CROSS_FIELD_CONFLICT' : (isPregnancy ? 'CRITICAL_RISK' : 'EDIT_REVIEW'),
+                  source: 'asha',
+                  createdAt: pr.createdAt ? new Date(pr.createdAt) : new Date(),
+                  confidence: null,
+                  rawData: {
+                    anomalyReason: pr.reason,
+                    targetTable: pr.tableName,
+                    recordId: pr.recordId,
+                    status: pr.status,
+                  }
+                });
+              }
             }
           });
         }
@@ -338,19 +466,29 @@ export default function PendingReview() {
                                           padding:'3px 8px', borderRadius:'4px', fontWeight:500, display:'inline-flex', alignItems:'center'}}>
                               <span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>domain</span> NEW NGO REQUEST
                             </span>
-                            <h4 style={{margin:'8px 0 4px', fontSize:'15px'}}>{r.rawData.ngoName}</h4>
-                            <p style={{fontSize:'13px', color:'#666', margin:'0 0 4px', display:'flex', alignItems:'center'}}>
-                              <span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>mail</span> {r.rawData.ngoEmail} <span className="mx-2">·</span> <span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>call</span> {r.rawData.contactPhone}
-                            </p>
-                            <p style={{fontSize:'13px', color:'#666', margin:'0 0 4px', display:'flex', alignItems:'center'}}>
-                              <span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>location_on</span> {r.rawData.village}, {r.rawData.district}
-                            </p>
-                            <p style={{fontSize:'13px', color:'#666', margin:'0 0 8px', display:'flex', alignItems:'center'}}>
-                              <span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>child_care</span> {r.rawData.childrenCount} children <span className="mx-2">·</span> {r.rawData.ngoType}
-                            </p>
-                            {r.rawData.message && (
+                            <h4 style={{margin:'8px 0 4px', fontSize:'15px'}}>{r.rawData.ngoName || 'NGO Partner'}</h4>
+                            {(r.rawData.ngoEmail || r.rawData.contactPhone) && (
+                              <p style={{fontSize:'13px', color:'#666', margin:'0 0 4px', display:'flex', alignItems:'center'}}>
+                                {r.rawData.ngoEmail && <><span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>mail</span> {r.rawData.ngoEmail}</>}
+                                {r.rawData.ngoEmail && r.rawData.contactPhone && <span className="mx-2">·</span>}
+                                {r.rawData.contactPhone && <><span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>call</span> {r.rawData.contactPhone}</>}
+                              </p>
+                            )}
+                            {(r.rawData.village || r.rawData.district) && (
+                              <p style={{fontSize:'13px', color:'#666', margin:'0 0 4px', display:'flex', alignItems:'center'}}>
+                                <span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>location_on</span> {[r.rawData.village, r.rawData.district].filter(Boolean).join(', ')}
+                              </p>
+                            )}
+                            {(r.rawData.childrenCount || r.rawData.ngoType) && (
+                              <p style={{fontSize:'13px', color:'#666', margin:'0 0 8px', display:'flex', alignItems:'center'}}>
+                                {r.rawData.childrenCount && <><span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>child_care</span> {r.rawData.childrenCount} children</>}
+                                {r.rawData.childrenCount && r.rawData.ngoType && <span className="mx-2">·</span>}
+                                {r.rawData.ngoType && <span>{r.rawData.ngoType}</span>}
+                              </p>
+                            )}
+                            {(r.rawData.message || r.rawData.anomalyReason) && (
                               <p style={{fontSize:'12px', color:'#888', fontStyle:'italic'}}>
-                                "{r.rawData.message}"
+                                "{r.rawData.message || r.rawData.anomalyReason}"
                               </p>
                             )}
                           </div>
@@ -394,9 +532,9 @@ export default function PendingReview() {
                                 Current: <strong>{formatDisplayDate(r.rawData.currentScheduledDate)}</strong> {r.rawData.currentScheduledTime ? `at ${r.rawData.currentScheduledTime}` : ''}
                               </p>
                             )}
-                            {r.rawData.message && (
+                            {(r.rawData.message || r.rawData.anomalyReason) && (
                               <p style={{fontSize:'12px', color:'#888', fontStyle:'italic'}}>
-                                "{r.rawData.message}"
+                                "{r.rawData.message || r.rawData.anomalyReason}"
                               </p>
                             )}
                           </div>
@@ -448,7 +586,7 @@ export default function PendingReview() {
                           <div>
                             <span style={{background:'#EAF3DE', color:'#27500A', fontSize:'11px',
                                           padding:'3px 8px', borderRadius:'4px', fontWeight:500, display:'inline-flex', alignItems:'center'}}>
-                              <span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>event</span> NEW APPOINTMENT
+                              <span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>event</span> APPOINTMENT REQUEST
                             </span>
                             <h4 style={{margin:'8px 0 4px', fontSize:'15px'}}>{r.rawData.ngoName || r.rawData.ngoEmail}</h4>
                             <p style={{fontSize:'13px', color:'#666', margin:'0 0 4px'}}>
@@ -456,9 +594,9 @@ export default function PendingReview() {
                                 ? <>Preferred Dates: <strong>{getPreferredDates(r.rawData).map(d => formatDisplayDate(d)).join(' or ')}</strong></>
                                 : <span style={{color:'#aaa'}}>No preferred dates provided</span>}
                             </p>
-                            {r.rawData.message && (
+                            {(r.rawData.message || r.rawData.anomalyReason) && (
                               <p style={{fontSize:'12px', color:'#888', fontStyle:'italic'}}>
-                                "{r.rawData.message}"
+                                "{r.rawData.message || r.rawData.anomalyReason}"
                               </p>
                             )}
                           </div>
@@ -476,6 +614,50 @@ export default function PendingReview() {
                                     border:'none', borderRadius:'8px', fontSize:'13px', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:'4px'}}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>calendar_today</span> Book Appointment
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div key={r.id} style={{border:'1px solid #CECBF6', borderRadius:'12px', padding:'16px', background:'white'}}>
+                        <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
+                          <div>
+                            <span style={{background:'#EEEDFE', color:'#534AB7', fontSize:'11px',
+                                          padding:'3px 8px', borderRadius:'4px', fontWeight:500, display:'inline-flex', alignItems:'center'}}>
+                              <span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>domain</span> NGO REQUEST
+                            </span>
+                            <h4 style={{margin:'8px 0 4px', fontSize:'15px'}}>{r.rawData.ngoName || r.title}</h4>
+                            {r.rawData.ngoEmail && (
+                              <p style={{fontSize:'13px', color:'#666', margin:'0 0 4px', display:'flex', alignItems:'center'}}>
+                                <span className="material-symbols-outlined" style={{ fontSize: '14px', marginRight: '4px' }}>mail</span> {r.rawData.ngoEmail}
+                              </p>
+                            )}
+                            <p style={{fontSize:'12px', color:'#555', marginTop:'4px'}}>
+                              "{r.rawData.message || r.rawData.anomalyReason || 'Submission received from Google Form'}"
+                            </p>
+                          </div>
+                          <span style={{fontSize:'11px', color:'#999'}}>{r.createdAt?.toDate?.()?.toLocaleString() || 'Recently'}</span>
+                        </div>
+                        <div style={{display:'flex', gap:'8px', marginTop:'12px'}}>
+                          <button
+                            onClick={() => {
+                              setSelectedAppointmentReview(r);
+                              setAppointmentDate(getPreferredDates(r.rawData).length > 0 ? parseToInputDate(getPreferredDates(r.rawData)[0]) : '');
+                              setAppointmentTime('10:00');
+                              setShowAppointmentModal(true);
+                            }}
+                            style={{flex:1, padding:'8px', background:'#1D9E75', color:'white',
+                                    border:'none', borderRadius:'8px', fontSize:'13px', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:'4px'}}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>calendar_today</span> Book Appointment
+                          </button>
+                          <button
+                            onClick={() => handleRejectReview(r.originalId, 'NGO request rejected')}
+                            style={{flex:1, padding:'8px', background:'white', color:'#E24B4A',
+                                    border:'1px solid #E24B4A', borderRadius:'8px', fontSize:'13px', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:'4px'}}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>cancel</span> Reject
                           </button>
                         </div>
                       </div>

@@ -57,7 +57,7 @@ export default function MobileLayout() {
         )}
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 pb-24 w-full max-w-full min-w-0 box-border">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 pb-36 sm:pb-30 w-full max-w-full min-w-0 box-border">
           <Outlet />
         </main>
 
