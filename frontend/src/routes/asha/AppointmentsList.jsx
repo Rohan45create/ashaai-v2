@@ -90,12 +90,12 @@ export default function AppointmentsList() {
                   </div>
                   <div>
                     <h3 className="font-bold text-[#1A1A18] text-lg mb-1 flex items-center gap-2">
-                      {visit.targetName}
+                      {visit.targetName || 'Scheduled Visit'}
                       {visit.type === 'ngo' && (
                         <span className="bg-[#0288D1] text-white text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">NGO</span>
                       )}
                     </h3>
-                    <p className="text-sm text-[#5F5E5A] bg-gray-50 p-2 rounded-lg border border-gray-100 mb-2">{visit.purpose || 'General checkup'}</p>
+                    <p className="text-sm text-[#5F5E5A] bg-gray-50 p-2 rounded-lg border border-gray-100 mb-2">{visit.purpose || 'Child health and nutrition support visit'}</p>
                     {(visit.ngoAddress || visit.address) && (
                       <a 
                         href={`https://maps.google.com/?q=${encodeURIComponent(visit.ngoAddress || visit.address)}`} 

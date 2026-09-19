@@ -7,11 +7,12 @@ import { useTx } from '../../context/TranslationContext';
 import { apiFetch, showToast } from '../../utils/api';
 import AppointmentSheet from '../../components/AppointmentSheet';
 import { useLanguageStore } from '../../stores/languageStore';
+import { getOfflineQueueCount } from '../../hooks/useOfflineQueue';
 
 import { 
   Home as HouseIcon, User, Baby, Syringe, Heart, Stethoscope, ClipboardList, Microscope,
   Eye, Hand, Pill, Bandage, Users, MapPin, Droplet, Shield, LineChart, Leaf,
-  Activity, Thermometer, BookOpen, Brain, Star, Globe
+  Activity, Thermometer, BookOpen, Brain, Star, Globe, HeartPulse
 } from 'lucide-react';
 
 const SURVEY_ICON_MAP = {
@@ -30,6 +31,7 @@ const SURVEY_ICON_MAP = {
   pregnant: <User className="w-6 h-6" />,
   elderly: <User className="w-6 h-6" />,
   family: <Users className="w-6 h-6" />,
+  users: <Users className="w-6 h-6" />,
   village: <MapPin className="w-6 h-6" />,
   water: <Droplet className="w-6 h-6" />,
   shield: <Shield className="w-6 h-6" />,
@@ -41,6 +43,7 @@ const SURVEY_ICON_MAP = {
   brain: <Brain className="w-6 h-6" />,
   star: <Star className="w-6 h-6" />,
   globe: <Globe className="w-6 h-6" />,
+  heartpulse: <HeartPulse className="w-6 h-6" />,
 };
 
 // Map a moduleKey to the display color for the module tile background
@@ -97,10 +100,15 @@ export default React.memo(function Home() {
 
   const [activeFilter, setActiveFilter] = useState(null);
 
+  // Sync client-side offline queue count from IndexedDB on mount
+  useEffect(() => {
+    getOfflineQueueCount().then(c => useSyncStore.getState().setPendingCount(c));
+  }, []);
+
   const filteredSubmissions = useMemo(() => {
     if (!activeFilter) return [];
     const now = new Date();
-    const todayStart = new Date(now.setHours(0, 0, 0, 0));
+    const todayStart = new Date(new Date().setHours(0, 0, 0, 0));
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
     return recentSurveys.filter(sub => {
@@ -111,8 +119,9 @@ export default React.memo(function Home() {
       if (activeFilter.includes('month')) return subDate >= monthStart;
       return true;
     }).filter(sub => {
-      if (activeFilter.includes('families')) return sub.moduleType === 'family_survey';
-      if (activeFilter.includes('children')) return sub.moduleType === 'child_growth' || sub.moduleType === 'vaccination';
+      const mod = sub.moduleType || (sub.data && (sub.data.moduleKey || sub.data.module_key));
+      if (activeFilter.includes('families')) return mod === 'family_survey';
+      if (activeFilter.includes('children')) return mod === 'child_growth' || mod === 'vaccination' || mod === 'anc';
       return true;
     });
   }, [activeFilter, recentSurveys]);
@@ -137,14 +146,15 @@ export default React.memo(function Home() {
         const arr = Array.isArray(submissions) ? submissions : [];
         arr.forEach(data => {
           const ts = data.submittedAt ? new Date(data.submittedAt) : null;
+          const mod = data.moduleType || (data.data && (data.data.moduleKey || data.data.module_key));
           if (ts && ts >= monthStart) {
             sMonth++;
-            if (data.moduleType === 'family_survey') fMonth++;
+            if (mod === 'family_survey') fMonth++;
           }
           if (ts && ts >= todayStart) {
             sToday++;
-            if (data.moduleType === 'family_survey') fToday++;
-            if (data.moduleType === 'child_growth' || data.moduleType === 'vaccination') cToday++;
+            if (mod === 'family_survey') fToday++;
+            if (mod === 'child_growth' || mod === 'vaccination' || mod === 'anc') cToday++;
           }
         });
 
@@ -242,7 +252,7 @@ export default React.memo(function Home() {
     return () => { isUnmounted = true; };
   }, [docId]);
 
-  // Load upcoming visits
+  // Load upcoming visits / appointments
   useEffect(() => {
     if (!docId) return;
     let isUnmounted = false;
@@ -251,7 +261,16 @@ export default React.memo(function Home() {
       try {
         const data = await apiFetch(`/api/appointments/upcoming/${docId}`);
         if (!isUnmounted) {
-          setUpcomingVisits(data.slice(0, 3));
+          if (Array.isArray(data)) {
+            const sorted = [...data].sort((a, b) => {
+              const tA = a.scheduledDate ? new Date(a.scheduledDate).getTime() : 0;
+              const tB = b.scheduledDate ? new Date(b.scheduledDate).getTime() : 0;
+              return tA - tB;
+            });
+            setUpcomingVisits(sorted.slice(0, 3));
+          } else {
+            setUpcomingVisits([]);
+          }
           setVisitsLoading(false);
         }
       } catch (err) {
@@ -304,7 +323,7 @@ export default React.memo(function Home() {
     allTemplates.forEach(t => {
       const path = getTemplatePath(t);
       const color = MODULE_COLOR_MAP[t.moduleKey] || 'bg-[#F3E5F5] text-[#6A1B9A]';
-      const icon = t.icon || 'clipboard';
+      const icon = (t.icon || 'clipboard').toLowerCase();
       const title = language === 'mr' && t.nameMr ? t.nameMr
                   : language === 'hi' && t.nameHi ? t.nameHi
                   : t.nameEn || t.moduleKey || 'Survey';
@@ -323,7 +342,9 @@ export default React.memo(function Home() {
     };
     // submittedAt is an ISO string from REST — use plain JS Date
     const displayDate = sub.submittedAt ? new Date(sub.submittedAt).toLocaleDateString() : 'N/A';
-    const nameToShow = sub.familyName || sub.householdId || 'Unknown Family';
+    const nameToShow = sub.familyName || 
+      (sub.data && (sub.data.familyHeadName || sub.data.headOfHousehold || sub.data.child_name || sub.data.childName || sub.data.mother_name || sub.data.motherName)) || 
+      (sub.householdId ? 'Household #' + String(sub.householdId).slice(0, 8) : 'Survey Record');
     
     return (
       <div 
@@ -462,7 +483,8 @@ export default React.memo(function Home() {
           {allTemplates.map(template => {
             const path = getTemplatePath(template);
             const color = MODULE_COLOR_MAP[template.moduleKey] || 'bg-[#F3E5F5] text-[#6A1B9A]';
-            const iconEl = SURVEY_ICON_MAP[template.icon] || SURVEY_ICON_MAP['clipboard'];
+            const iconKey = (template.icon || 'clipboard').toLowerCase();
+            const iconEl = SURVEY_ICON_MAP[iconKey] || SURVEY_ICON_MAP['clipboard'];
             const displayTitle = language === 'mr' && template.nameMr ? template.nameMr
                                : language === 'hi' && template.nameHi ? template.nameHi
                                : template.nameEn || template.moduleKey || 'Survey';
@@ -491,49 +513,59 @@ export default React.memo(function Home() {
           })}
         </div>
 
-        {/* Upcoming Visits Section */}
-        {upcomingVisits.length > 0 && (
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-[#D3D1C7]">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-bold text-[#1A1A18] flex items-center gap-2">
-                <span className="material-symbols-outlined text-[#1D9E75]">calendar_month</span>
-                Upcoming Visits
-              </h2>
-              <Link to="/asha/appointments" className="text-sm font-medium text-[#1D9E75] hover:underline">
-                View All
-              </Link>
+        {/* Upcoming Appointments Section */}
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-[#D3D1C7]">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-bold text-[#1A1A18] flex items-center gap-2">
+              <span className="material-symbols-outlined text-[#1D9E75]">calendar_month</span>
+              {tx('Upcoming Appointments')}
+            </h2>
+            <Link to="/asha/appointments" className="text-sm font-semibold text-[#1D9E75] hover:underline">
+              {tx('View All')}
+            </Link>
+          </div>
+
+          {visitsLoading ? (
+            <div className="h-20 bg-gray-100 animate-pulse rounded-xl" />
+          ) : upcomingVisits.length === 0 ? (
+            <div className="p-4 bg-gray-50 rounded-xl border border-dashed border-[#D3D1C7] text-center">
+              <span className="material-symbols-outlined text-3xl text-gray-400 mb-1">event_available</span>
+              <p className="text-xs text-[#5F5E5A] font-medium">{tx('No upcoming appointments scheduled')}</p>
             </div>
+          ) : (
             <div className="space-y-3">
               {upcomingVisits.map(visit => {
                 const dateObj = new Date(visit.scheduledDate);
-                const dateStr = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const dateStr = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
                 
                 return (
-                  <div key={visit.id} className="flex items-center justify-between p-3 bg-gray-50 border border-[#D3D1C7] rounded-xl">
-                    <div>
-                      <p className="text-xs font-bold text-[#1D9E75] mb-0.5">📅 {dateStr} at {visit.scheduledTime || 'TBD'}</p>
-                      <h3 className="font-bold text-[#1A1A18] text-sm flex items-center gap-2">
-                        {visit.targetName}
+                  <div key={visit.id} className="flex items-center justify-between p-3.5 bg-gray-50 border border-[#D3D1C7] rounded-xl hover:border-[#1D9E75]/40 transition-colors">
+                    <div className="flex-1 pr-3 min-w-0">
+                      <p className="text-xs font-bold text-[#1D9E75] mb-1">
+                        📅 {dateStr} at {visit.scheduledTime || '10:00 AM'}
+                      </p>
+                      <h3 className="font-bold text-[#1A1A18] text-sm flex items-center gap-2 truncate">
+                        <span className="truncate">{visit.targetName}</span>
                         {visit.type === 'ngo' && (
-                          <span className="bg-[#0288D1] text-white text-[9px] px-1.5 py-0.5 rounded-full uppercase tracking-wider">NGO</span>
+                          <span className="bg-[#0288D1] text-white text-[9px] px-1.5 py-0.5 rounded-full uppercase tracking-wider font-bold shrink-0">NGO</span>
                         )}
                       </h3>
-                      <p className="text-xs text-[#5F5E5A] mb-1">{visit.purpose || 'Checkup'}</p>
+                      <p className="text-xs text-[#5F5E5A] mt-0.5 line-clamp-1">{visit.purpose || 'Routine health visit'}</p>
                       {(visit.ngoAddress || visit.address) && (
                         <a 
                           href={`https://maps.google.com/?q=${encodeURIComponent(visit.ngoAddress || visit.address)}`} 
                           target="_blank" 
                           rel="noreferrer"
-                          className="text-[11px] text-[#0288D1] flex items-center gap-1 mt-1 hover:underline w-max bg-[#E1F5FE] px-2 py-0.5 rounded-md font-medium"
+                          className="text-[11px] text-[#0288D1] flex items-center gap-1 mt-1.5 hover:underline w-max bg-[#E1F5FE] px-2 py-0.5 rounded-md font-medium"
                         >
-                          <span className="material-symbols-outlined text-[14px]">map</span>
-                          View Location
+                          <span className="material-symbols-outlined text-[13px]">map</span>
+                          {tx('View Location')}
                         </a>
                       )}
                     </div>
                     <button 
                       onClick={() => handleCompleteVisit(visit)}
-                      className="px-3 py-1.5 bg-[#1D9E75] text-white rounded-lg text-xs font-bold shadow-sm active:scale-95 whitespace-nowrap"
+                      className="px-3.5 py-1.5 bg-[#1D9E75] text-white rounded-lg text-xs font-bold shadow-sm active:scale-95 hover:bg-[#16815e] transition-colors whitespace-nowrap shrink-0"
                     >
                       Done ✓
                     </button>
@@ -541,10 +573,8 @@ export default React.memo(function Home() {
                 );
               })}
             </div>
-          </div>
-        )}
-
-        {/* NGO Visits merged into Upcoming Visits above */}
+          )}
+        </div>
 
         {/* My Activity Section */}
         <div className="pb-8">

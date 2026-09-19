@@ -21,6 +21,7 @@ public class NgoAppointment extends BaseEntity {
 
     private OffsetDateTime scheduledAt;
     private String status;
+    private String purpose;
 
     public Ngo getNgo() { return ngo; }
     public void setNgo(Ngo ngo) { this.ngo = ngo; }
@@ -30,4 +31,6 @@ public class NgoAppointment extends BaseEntity {
     public void setScheduledAt(OffsetDateTime scheduledAt) { this.scheduledAt = scheduledAt; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getPurpose() { return purpose; }
+    public void setPurpose(String purpose) { this.purpose = purpose; }
 }

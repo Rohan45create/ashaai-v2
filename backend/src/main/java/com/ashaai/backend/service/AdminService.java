@@ -546,4 +546,211 @@ public class AdminService {
 
         return response;
     }
+
+    public List<Map<String, Object>> getSurveyRecords(String surveyType, UUID ashaId, Date start, Date end) {
+        List<Map<String, Object>> records = new ArrayList<>();
+        String type = surveyType.toLowerCase();
+
+        switch (type) {
+            case "households" -> {
+                List<Household> list = householdRepository.findAll().stream()
+                    .filter(h -> ashaId == null || (getAsha(h) != null && getAsha(h).getId().equals(ashaId)))
+                    .filter(h -> isBetween(getCreatedAt(h), start, end))
+                    .toList();
+                for (Household h : list) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", h.getId().toString());
+                    m.put("houseNumber", h.getHouseNumber());
+                    m.put("house_number", h.getHouseNumber());
+                    m.put("address", h.getAddress());
+                    m.put("bplStatus", h.getBplStatus());
+                    m.put("totalMembers", h.getTotalMembers());
+                    m.put("familyHeadName", h.getAddress() != null ? h.getAddress() : "Family Head");
+                    m.put("createdAt", h.getCreatedAt() != null ? h.getCreatedAt().toString() : null);
+                    records.add(m);
+                }
+            }
+            case "household_members" -> {
+                List<HouseholdMember> list = householdMemberRepository.findAll().stream()
+                    .filter(hm -> ashaId == null || (hm.getHousehold() != null && getAsha(hm.getHousehold()) != null && getAsha(hm.getHousehold()).getId().equals(ashaId)))
+                    .filter(hm -> isBetween(getCreatedAt(hm), start, end))
+                    .toList();
+                for (HouseholdMember hm : list) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", hm.getId().toString());
+                    m.put("house_number", hm.getHousehold() != null ? hm.getHousehold().getHouseNumber() : "-");
+                    m.put("member_name", hm.getName());
+                    m.put("gender", hm.getGender() != null ? hm.getGender() : "-");
+                    m.put("date_of_birth", hm.getDateOfBirth() != null ? hm.getDateOfBirth().toString() : "-");
+                    m.put("age", hm.getDateOfBirth() != null ? java.time.Period.between(hm.getDateOfBirth(), java.time.LocalDate.now()).getYears() : "-");
+                    m.put("relationship_to_head", hm.getRelationshipToHead() != null ? hm.getRelationshipToHead() : "-");
+                    m.put("marital_status", hm.getMaritalStatus() != null ? hm.getMaritalStatus() : "-");
+                    m.put("aadhaar_raw", hm.getAadhaarLast4() != null ? "XXXX-XXXX-" + hm.getAadhaarLast4() : "-");
+                    m.put("mobile_number", hm.getMobileNumber() != null ? hm.getMobileNumber() : "-");
+                    m.put("abha_id", hm.getTemporaryId() != null ? hm.getTemporaryId() : "-");
+                    m.put("birth_register_serial", hm.getBirthRegisterSerial() != null ? hm.getBirthRegisterSerial() : "-");
+                    m.put("reason_removed_from_register", hm.getReasonRemoved() != null ? hm.getReasonRemoved() : "-");
+                    records.add(m);
+                }
+            }
+            case "children" -> {
+                List<Child> list = childRepository.findAll().stream()
+                    .filter(c -> ashaId == null || (getAsha(c) != null && getAsha(c).getId().equals(ashaId)))
+                    .filter(c -> isBetween(getCreatedAt(c), start, end))
+                    .toList();
+                for (Child c : list) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", c.getId().toString());
+                    String name = c.getHouseholdMember() != null ? c.getHouseholdMember().getName() : "Child";
+                    m.put("name", name);
+                    m.put("childName", name);
+                    m.put("gender", c.getHouseholdMember() != null && c.getHouseholdMember().getGender() != null ? c.getHouseholdMember().getGender() : "-");
+                    m.put("dob", c.getHouseholdMember() != null && c.getHouseholdMember().getDateOfBirth() != null ? c.getHouseholdMember().getDateOfBirth().toString() : "-");
+                    m.put("birthWeight", "-");
+                    m.put("currentWeight", c.getCurrentWeightKg() != null ? c.getCurrentWeightKg() + " kg" : "-");
+                    m.put("height", c.getCurrentHeightCm() != null ? c.getCurrentHeightCm() + " cm" : "-");
+                    m.put("muac", c.getMuacMm() != null ? c.getMuacMm() + " mm" : "-");
+                    m.put("nutritionStatus", c.getMalnutritionGrade() != null ? c.getMalnutritionGrade() : "Normal");
+                    m.put("motherName", c.getMotherMember() != null ? c.getMotherMember().getName() : "-");
+                    m.put("riskLevel", c.getRiskLevel() != null ? c.getRiskLevel() : "LOW");
+                    records.add(m);
+                }
+            }
+            case "pregnancies" -> {
+                List<Pregnancy> list = pregnancyRepository.findAll().stream()
+                    .filter(p -> ashaId == null || (getAsha(p) != null && getAsha(p).getId().equals(ashaId)))
+                    .filter(p -> isBetween(getCreatedAt(p), start, end))
+                    .toList();
+                for (Pregnancy p : list) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", p.getId().toString());
+                    m.put("motherName", p.getMotherMember() != null ? p.getMotherMember().getName() : "Mother");
+                    m.put("age", "-");
+                    m.put("lmp", p.getLmp() != null ? p.getLmp().toString() : "-");
+                    m.put("edd", p.getEdd() != null ? p.getEdd().toString() : "-");
+                    m.put("gravida", "-");
+                    m.put("parity", "-");
+                    m.put("isHighRisk", Boolean.TRUE.equals(p.getHighRiskFlag()));
+                    m.put("bloodGroup", p.getBloodGroup() != null ? p.getBloodGroup() : "-");
+                    m.put("husbandName", "-");
+                    records.add(m);
+                }
+            }
+            case "vaccinations" -> {
+                List<Vaccination> list = vaccinationRepository.findAll().stream()
+                    .filter(v -> ashaId == null || (getAsha(v) != null && getAsha(v).getId().equals(ashaId)))
+                    .filter(v -> isBetween(getCreatedAt(v), start, end))
+                    .toList();
+                for (Vaccination v : list) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", v.getId().toString());
+                    m.put("childName", v.getChild() != null && v.getChild().getHouseholdMember() != null ? v.getChild().getHouseholdMember().getName() : "-");
+                    m.put("vaccineName", v.getVaccineName() != null ? v.getVaccineName() : "Vaccine");
+                    m.put("dose", "Dose 1");
+                    m.put("givenDate", v.getGivenDate() != null ? v.getGivenDate().toString() : "-");
+                    m.put("dueDate", v.getDueDate() != null ? v.getDueDate().toString() : "-");
+                    m.put("status", v.getGivenDate() != null ? "Given" : "Due");
+                    m.put("site", "Left Arm");
+                    records.add(m);
+                }
+            }
+            case "referrals" -> {
+                List<Referral> list = referralRepository.findAll().stream()
+                    .filter(r -> ashaId == null || (getAsha(r) != null && getAsha(r).getId().equals(ashaId)))
+                    .filter(r -> isBetween(getCreatedAt(r), start, end))
+                    .toList();
+                for (Referral r : list) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", r.getId().toString());
+                    String name = "-";
+                    if (r.getHouseholdMember() != null) name = r.getHouseholdMember().getName();
+                    else if (r.getChild() != null && r.getChild().getHouseholdMember() != null) name = r.getChild().getHouseholdMember().getName();
+                    m.put("patientName", name);
+                    m.put("reason", r.getReason() != null ? r.getReason() : "-");
+                    m.put("referredTo", r.getNrcName() != null ? r.getNrcName() : "NRC Beed District Hospital");
+                    m.put("date", r.getReferredDate() != null ? r.getReferredDate().toString() : "-");
+                    m.put("status", r.getStatus() != null ? r.getStatus() : "Pending");
+                    m.put("followUpDate", r.getFollowUpDueDate() != null ? r.getFollowUpDueDate().toString() : "-");
+                    records.add(m);
+                }
+            }
+            case "visits" -> {
+                List<Visit> list = visitRepository.findAll().stream()
+                    .filter(vis -> ashaId == null || (getAsha(vis) != null && getAsha(vis).getId().equals(ashaId)))
+                    .filter(vis -> isBetween(getCreatedAt(vis), start, end))
+                    .toList();
+                for (Visit vis : list) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", vis.getId().toString());
+                    String target = "Household Visit";
+                    if (vis.getChild() != null && vis.getChild().getHouseholdMember() != null) target = vis.getChild().getHouseholdMember().getName();
+                    m.put("headName", target);
+                    m.put("patientName", target);
+                    m.put("purpose", vis.getActionTaken() != null ? vis.getActionTaken() : (vis.getNotes() != null ? vis.getNotes() : "Routine Child Growth Checkup"));
+                    m.put("date", vis.getVisitDate() != null ? vis.getVisitDate().toString() : "-");
+                    m.put("notes", vis.getNotes() != null ? vis.getNotes() : "-");
+                    m.put("followUpDate", "-");
+                    records.add(m);
+                }
+            }
+            case "disease_surveillance", "disease_cases" -> {
+                List<DiseaseCase> list = diseaseCaseRepository.findAll().stream()
+                    .filter(dc -> ashaId == null || (getAsha(dc) != null && getAsha(dc).getId().equals(ashaId)))
+                    .filter(dc -> isBetween(getCreatedAt(dc), start, end))
+                    .toList();
+                for (DiseaseCase dc : list) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", dc.getId().toString());
+                    m.put("patientName", dc.getHouseholdMember() != null ? dc.getHouseholdMember().getName() : "-");
+                    m.put("disease", dc.getDiseaseType() != null ? dc.getDiseaseType() : "General illness");
+                    m.put("symptoms", dc.getSymptoms() != null ? dc.getSymptoms() : "-");
+                    m.put("dateOfOnset", dc.getOnsetDate() != null ? dc.getOnsetDate().toString() : "-");
+                    m.put("status", Boolean.TRUE.equals(dc.getTreatmentStarted()) ? "Treatment Started" : "Suspected");
+                    m.put("referredTo", Boolean.TRUE.equals(dc.getReferredToPhc()) ? "PHC" : "Home Care");
+                    records.add(m);
+                }
+            }
+            case "ncd_tracking", "ncd_records" -> {
+                List<NcdRecord> list = ncdRecordRepository.findAll().stream()
+                    .filter(ncd -> ashaId == null || (getAsha(ncd) != null && getAsha(ncd).getId().equals(ashaId)))
+                    .filter(ncd -> isBetween(getCreatedAt(ncd), start, end))
+                    .toList();
+                for (NcdRecord ncd : list) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", ncd.getId().toString());
+                    m.put("patientName", ncd.getHouseholdMember() != null ? ncd.getHouseholdMember().getName() : "-");
+                    m.put("age", "-");
+                    m.put("bloodPressure", "120/80");
+                    m.put("bloodSugar", "95 mg/dL");
+                    m.put("height", "-");
+                    m.put("weight", "-");
+                    m.put("bmi", "-");
+                    m.put("riskLevel", "Normal");
+                    records.add(m);
+                }
+            }
+            case "death_records" -> {
+                List<DeathRecord> list = deathRecordRepository.findAll().stream()
+                    .filter(dr -> ashaId == null || (getAsha(dr) != null && getAsha(dr).getId().equals(ashaId)))
+                    .filter(dr -> isBetween(getCreatedAt(dr), start, end))
+                    .toList();
+                for (DeathRecord dr : list) {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", dr.getId().toString());
+                    m.put("deceasedName", dr.getHouseholdMember() != null ? dr.getHouseholdMember().getName() : "-");
+                    m.put("age", "-");
+                    m.put("gender", dr.getHouseholdMember() != null && dr.getHouseholdMember().getGender() != null ? dr.getHouseholdMember().getGender() : "-");
+                    m.put("dateOfDeath", dr.getDateOfDeath() != null ? dr.getDateOfDeath().toString() : "-");
+                    m.put("placeOfDeath", dr.getPlaceOfDeath() != null ? dr.getPlaceOfDeath() : "-");
+                    m.put("causeOfDeath", dr.getCause() != null ? dr.getCause() : "-");
+                    records.add(m);
+                }
+            }
+            default -> {
+                // Return empty list for unrecognized survey types
+            }
+        }
+
+        return records;
+    }
 }

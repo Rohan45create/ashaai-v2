@@ -33,21 +33,28 @@ public class LinkageService {
     @Transactional
     public String generateTemporaryId(String district) {
         int year = LocalDate.now().getYear();
-        DistrictSequenceId id = new DistrictSequenceId(district, year);
+        String safeDistrict = district != null && !district.isBlank()
+                ? district.trim().toUpperCase()
+                : "DEFAULT";
+        DistrictSequenceId id = new DistrictSequenceId(safeDistrict, year);
         
         DistrictSequence seq = sequenceRepository.findById(id).orElseGet(() -> {
             DistrictSequence s = new DistrictSequence();
-            s.setDistrict(district);
+            s.setDistrict(safeDistrict);
             s.setYear(year);
             s.setCurrentValue(0);
             return s;
         });
 
-        int nextVal = seq.getCurrentValue() + 1;
-        seq.setCurrentValue(nextVal);
-        sequenceRepository.save(seq);
+        String tempId;
+        do {
+            int nextVal = seq.getCurrentValue() + 1;
+            seq.setCurrentValue(nextVal);
+            tempId = String.format("TMP-%s-%d-%05d", safeDistrict, year, nextVal);
+        } while (memberRepository.findByTemporaryId(tempId).isPresent());
 
-        return String.format("TMP-%s-%d-%05d", district.toUpperCase(), year, nextVal);
+        sequenceRepository.save(seq);
+        return tempId;
     }
 
     @Transactional

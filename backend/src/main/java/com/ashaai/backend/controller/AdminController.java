@@ -154,4 +154,38 @@ public class AdminController {
         if (resolvedHeadId == null) return ResponseEntity.status(403).build();
         return ResponseEntity.ok(adminService.getMapData(resolvedHeadId));
     }
+
+    @GetMapping("/surveys/{surveyType}")
+    public ResponseEntity<List<java.util.Map<String, Object>>> getSurveys(
+            @PathVariable String surveyType,
+            @org.springframework.web.bind.annotation.RequestParam(value = "ashaId", required = false) java.util.UUID ashaId,
+            @org.springframework.web.bind.annotation.RequestParam(value = "start", required = false) String startStr,
+            @org.springframework.web.bind.annotation.RequestParam(value = "end", required = false) String endStr,
+            org.springframework.security.core.Authentication authentication) {
+        com.ashaai.backend.security.AshaAuthenticationToken auth =
+            (com.ashaai.backend.security.AshaAuthenticationToken) authentication;
+
+        java.util.UUID effectiveAshaId = ashaId;
+        if (auth.getAshaHeadId() == null) {
+            if (auth.getAshaId() == null) {
+                return ResponseEntity.status(403).build();
+            }
+            effectiveAshaId = auth.getAshaId();
+        }
+
+        java.util.Date start = null;
+        java.util.Date end = null;
+        if (startStr != null && !startStr.isBlank()) {
+            try {
+                start = java.util.Date.from(java.time.Instant.parse(startStr));
+            } catch (Exception ignored) {}
+        }
+        if (endStr != null && !endStr.isBlank()) {
+            try {
+                end = java.util.Date.from(java.time.Instant.parse(endStr));
+            } catch (Exception ignored) {}
+        }
+
+        return ResponseEntity.ok(adminService.getSurveyRecords(surveyType, effectiveAshaId, start, end));
+    }
 }

@@ -60,7 +60,7 @@ public class AppointmentController {
     @GetMapping("/upcoming/{ashaId}")
     public ResponseEntity<List<Map<String, Object>>> getUpcomingAppointments(@PathVariable UUID ashaId) {
         List<NgoAppointment> appointments = appointmentRepository
-                .findByReferral_Asha_IdAndScheduledAtGreaterThanEqualAndStatusNotOrderByScheduledAtAsc(
+                .findUpcomingForAsha(
                         ashaId, OffsetDateTime.now().withHour(0).withMinute(0).withSecond(0), "completed"
                 );
 
@@ -74,9 +74,24 @@ public class AppointmentController {
                 map.put("scheduledTime", appt.getScheduledAt().format(DateTimeFormatter.ofPattern("HH:mm")));
             }
 
+            // Resolve target name
             if (appt.getReferral() != null) {
-                map.put("targetName", appt.getReferral().getChildName());
-                map.put("purpose", appt.getReferral().getReason());
+                String childName = appt.getReferral().getChildName();
+                if (childName != null && !childName.isBlank() && !"Child".equalsIgnoreCase(childName)) {
+                    map.put("targetName", childName);
+                } else if (appt.getReferral().getHouseholdMember() != null && appt.getReferral().getHouseholdMember().getName() != null) {
+                    map.put("targetName", appt.getReferral().getHouseholdMember().getName());
+                } else if (appt.getReferral().getChild() != null && appt.getReferral().getChild().getHouseholdMember() != null) {
+                    map.put("targetName", appt.getReferral().getChild().getHouseholdMember().getName());
+                }
+
+                if (appt.getReferral().getReason() != null && !appt.getReferral().getReason().isBlank()) {
+                    map.put("purpose", appt.getReferral().getReason());
+                }
+            }
+
+            if (appt.getPurpose() != null && !appt.getPurpose().isBlank()) {
+                map.put("purpose", appt.getPurpose());
             }
 
             if (appt.getNgo() != null) {
@@ -86,6 +101,14 @@ public class AppointmentController {
                 map.put("ngoName", appt.getNgo().getName());
                 map.put("ngoAddress", appt.getNgo().getAddress());
                 map.put("address", appt.getNgo().getAddress());
+            }
+
+            if (map.get("targetName") == null) {
+                map.put("targetName", "Scheduled Visit");
+            }
+
+            if (map.get("purpose") == null) {
+                map.put("purpose", "Child health and nutrition support visit");
             }
             
             map.put("status", appt.getStatus());
@@ -128,7 +151,7 @@ public class AppointmentController {
         
         String dateStr = (String) req.get("scheduledDate");
         String timeStr = (String) req.get("scheduledTime");
-        
+
         if (dateStr != null && !dateStr.isBlank()) {
             String time = (timeStr != null && !timeStr.isBlank()) ? timeStr : "10:00";
             try {
@@ -139,6 +162,9 @@ public class AppointmentController {
         } else {
             appt.setScheduledAt(OffsetDateTime.now().plusDays(3));
         }
+
+        String purpose = referral.getReason() != null ? referral.getReason() : "Child health follow-up visit";
+        appt.setPurpose(purpose);
 
         NgoAppointment saved = appointmentRepository.save(appt);
         logger.info("event=referral_appointment_booked appointment_id={} ngo_id={} referral_id={}",
@@ -151,7 +177,6 @@ public class AppointmentController {
         String changeUrl = buildRescheduleUrl(ngo.getContactEmail(), effectiveDate);
 
         // Send confirmation email via Gmail SMTP
-        String purpose = referral.getReason() != null ? referral.getReason() : "Child health follow-up visit";
         boolean emailSent = false;
         if (ngo.getContactEmail() != null && !ngo.getContactEmail().isBlank()) {
             emailSent = emailService.sendAppointmentConfirmation(
@@ -172,6 +197,53 @@ public class AppointmentController {
         response.put("message", "Referral appointment scheduled successfully");
 
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/schedule")
+    public ResponseEntity<Map<String, Object>> scheduleAppointment(@RequestBody Map<String, Object> req) {
+        String targetName = (String) req.get("targetName");
+        String purpose = (String) req.get("purpose");
+        String dateStr = (String) req.get("scheduledDate");
+        String timeStr = (String) req.get("scheduledTime");
+
+        if (purpose == null || purpose.isBlank()) {
+            purpose = "Follow-up health checkup";
+        }
+
+        NgoAppointment appt = new NgoAppointment();
+        List<Ngo> ngos = ngoRepository.findAll();
+        if (!ngos.isEmpty()) {
+            appt.setNgo(ngos.get(0));
+        }
+        appt.setStatus("scheduled");
+        appt.setPurpose(purpose);
+
+        if (dateStr != null && !dateStr.isBlank()) {
+            String time = (timeStr != null && !timeStr.isBlank()) ? timeStr : "10:00";
+            if (time.toLowerCase().contains("am") || time.toLowerCase().contains("pm")) {
+                try {
+                    DateTimeFormatter parser = DateTimeFormatter.ofPattern("hh:mm a", java.util.Locale.ENGLISH);
+                    java.time.LocalTime lt = java.time.LocalTime.parse(time.toUpperCase(), parser);
+                    time = lt.format(DateTimeFormatter.ofPattern("HH:mm"));
+                } catch (Exception ignored) {
+                    time = "10:00";
+                }
+            }
+            try {
+                appt.setScheduledAt(OffsetDateTime.parse(dateStr + "T" + time + ":00+05:30"));
+            } catch (Exception e) {
+                appt.setScheduledAt(OffsetDateTime.now().plusDays(3));
+            }
+        } else {
+            appt.setScheduledAt(OffsetDateTime.now().plusDays(3));
+        }
+
+        NgoAppointment saved = appointmentRepository.save(appt);
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("status", "success");
+        resp.put("appointmentId", saved.getId().toString());
+        resp.put("message", "Appointment scheduled successfully");
+        return ResponseEntity.ok(resp);
     }
 
     private String buildRescheduleUrl(String email, String dateStr) {

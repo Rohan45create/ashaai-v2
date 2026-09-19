@@ -99,4 +99,16 @@ public class HouseholdMember extends BaseEntity {
 
     public String getGeneticConditionNotes() { return geneticConditionNotes; }
     public void setGeneticConditionNotes(String geneticConditionNotes) { this.geneticConditionNotes = geneticConditionNotes; }
+
+    @Column(name = "created_at")
+    private java.time.OffsetDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private java.time.OffsetDateTime updatedAt;
+
+    public java.time.OffsetDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(java.time.OffsetDateTime createdAt) { this.createdAt = createdAt; }
+
+    public java.time.OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(java.time.OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

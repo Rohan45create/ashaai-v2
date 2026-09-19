@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import AadhaarInput from '../../../components/AadhaarInput';
 import DuplicateWarningModal from '../../../components/DuplicateWarningModal';
 import { useAuthStore } from '../../../stores/authStore';
-import { addHousehold, addMember } from '../../../utils/firestore';
+import { apiFetch } from '../../../utils/api';
+import useOfflineQueue from '../../../hooks/useOfflineQueue';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import AmbientToggle from '../../../components/AmbientToggle';
 import VoiceOverlay from '../../../components/VoiceOverlay';
@@ -16,7 +17,8 @@ async function hashAadhaar(aadhaarString) {
 }
 
 export default React.memo(function FamilySurvey() {
-  const { ashaId, user } = useAuthStore();
+  const { ashaId, docId, user } = useAuthStore();
+  const { addToQueue } = useOfflineQueue();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const location = useLocation();
@@ -54,11 +56,12 @@ export default React.memo(function FamilySurvey() {
       serial_number: i + 1,
       house_number: household.house_number, 
       member_name: '', gender: '',
-      date_of_birth: '', age: '', relationship_to_head: '',
+      date_of_birth: '', age: '', relationship_to_head: i === 0 ? 'Self' : '',
       marital_status: '', aadhaar_raw: '', aadhaarHash: '', mobile_number: '',
       abha_id: '', birth_register_serial: '',
       reason_removed_from_register: '',
       noAadhaar: false, temporaryId: '',
+      is_pregnant: false,
       has_genetic_condition: false, genetic_conditions: '', genetic_condition_notes: '',
       voiceFilled: [], isDuplicate: false, existingId: null
     })));
@@ -67,11 +70,12 @@ export default React.memo(function FamilySurvey() {
   useEffect(() => {
     if (viewState?.submissionData) {
       const data = viewState.submissionData;
-      if (data.formData) {
-        if (data.formData.household) setHousehold(data.formData.household);
-        if (data.formData.members) {
-          setMembers(data.formData.members);
-          setMemberCount(data.formData.members.length);
+      const formData = data.data || data.formData || data;
+      if (formData) {
+        if (formData.household) setHousehold(formData.household);
+        if (formData.members) {
+          setMembers(formData.members);
+          setMemberCount(formData.members.length);
         }
       }
       setIsDataLoaded(true);
@@ -81,12 +85,12 @@ export default React.memo(function FamilySurvey() {
         try {
           const docSnap = await apiFetch(`/api/surveySubmissions/${submissionId}`);
           if (docSnap) {
-            const data = docSnap;
-            if (data.formData) {
-              if (data.formData.household) setHousehold(data.formData.household);
-              if (data.formData.members) {
-                setMembers(data.formData.members);
-                setMemberCount(data.formData.members.length);
+            const formData = docSnap.data || docSnap.formData || docSnap;
+            if (formData) {
+              if (formData.household) setHousehold(formData.household);
+              if (formData.members) {
+                setMembers(formData.members);
+                setMemberCount(formData.members.length);
               }
             }
           }
@@ -107,22 +111,17 @@ export default React.memo(function FamilySurvey() {
   };
 
   const checkDuplicate = async (index, aadhaarRaw) => {
-    if (!aadhaarRaw || aadhaarRaw.length < 12 || !user) return;
+    if (!aadhaarRaw || aadhaarRaw.length < 12) return;
     try {
       const hash = await hashAadhaar(aadhaarRaw);
       updateMember(index, 'aadhaarHash', hash);
-      const token = await user.getIdToken();
-      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/members/check-duplicate?aadhaar_hash=${hash}`, {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.found) {
-          setDuplicateModal({ show: true, existingRecord: data.record, memberIndex: index });
-        }
+      const last4 = aadhaarRaw.slice(-4);
+      const data = await apiFetch(`/api/members/check-duplicate?aadhaar_last4=${last4}&aadhaar_hash=${hash}&aadhaar_raw=${aadhaarRaw}`);
+      if (data && data.found) {
+        setDuplicateModal({ show: true, existingRecord: data.record, memberIndex: index });
       }
     } catch (e) {
-      console.error(e);
+      console.error("Duplicate check failed:", e);
     }
   };
 
@@ -179,50 +178,89 @@ export default React.memo(function FamilySurvey() {
     }
 
     setIsLoading(true);
+    const familyHeadName = members[0]?.member_name || 'Unknown';
+    const resolvedAshaId = docId || ashaId || localStorage.getItem('ashaId') || user?.id || user?.uid;
+
+    let payload = null;
     try {
-      const familyHeadName = members[0]?.member_name || 'Unknown';
-      
-      const householdId = await addHousehold({
-        houseNumber: household.house_number,
-        familyHeadName,
-        totalMembers: members.length,
-        bplStatus: household.bplStatus,
-        source: 'manual'
-      }, ashaId);
-
-      for (const m of members) {
+      const formattedMembers = [];
+      for (let idx = 0; idx < members.length; idx++) {
+        const m = members[idx];
         let aadhaarHash = m.aadhaarHash;
-        if (m.aadhaar_raw && !aadhaarHash) aadhaarHash = await hashAadhaar(m.aadhaar_raw);
+        if (m.aadhaar_raw && !aadhaarHash) {
+          aadhaarHash = await hashAadhaar(m.aadhaar_raw);
+        }
 
-        await addMember({
-          householdId,
-          houseNumber: household.house_number,
-          memberName: m.member_name,
+        formattedMembers.push({
+          serial_number: idx + 1,
+          member_name: m.member_name,
+          name: m.member_name,
           gender: m.gender,
-          dateOfBirth: m.date_of_birth ? new Date(m.date_of_birth) : null,
-          age: parseInt(m.age) || null,
-          relationshipToHead: m.relationship_to_head,
-          maritalStatus: m.marital_status || null,
-          aadhaarEncrypted: m.aadhaar_raw ? m.aadhaar_raw : null, 
-          aadhaarHash: aadhaarHash,
+          date_of_birth: m.date_of_birth || null,
+          age: m.age ? parseInt(m.age) : null,
+          relationship_to_head: m.relationship_to_head || (idx === 0 ? 'Self' : 'Other'),
+          marital_status: m.marital_status || null,
+          aadhaar_raw: m.aadhaar_raw || null,
+          aadhaar_last4: m.aadhaar_raw && m.aadhaar_raw.length >= 4 ? m.aadhaar_raw.slice(-4) : (m.aadhaarLast4 || null),
+          aadhaar_hash: aadhaarHash || null,
+          temporary_id: m.temporaryId || null,
           temporaryId: m.temporaryId || null,
-          mobileNumber: m.mobile_number || null,
-          abhaId: m.abha_id || null,
-          has_genetic_condition: m.has_genetic_condition || false,
-          genetic_conditions: m.genetic_conditions ? m.genetic_conditions.split(',').map(s=>s.trim()) : [],
+          noAadhaar: m.noAadhaar || false,
+          mobile_number: m.mobile_number || null,
+          abha_id: m.abha_id || null,
+          is_pregnant: Boolean(m.is_pregnant),
+          pregnant: Boolean(m.is_pregnant),
+          has_genetic_condition: Boolean(m.has_genetic_condition),
+          genetic_conditions: m.genetic_conditions ? (typeof m.genetic_conditions === 'string' ? m.genetic_conditions.split(',').map(s=>s.trim()) : m.genetic_conditions) : [],
           genetic_condition_notes: m.genetic_condition_notes || '',
-          source: 'manual',
-          existingId: m.existingId
-        }, ashaId);
+          existingId: m.existingId || null,
+        });
       }
 
-      // (Logging to module_submissions is now handled on the backend or obsolete)
+      payload = {
+        moduleKey: 'family_survey',
+        ashaId: resolvedAshaId,
+        data: {
+          moduleKey: 'family_survey',
+          household: {
+            house_number: household.house_number,
+            bplStatus: household.bplStatus,
+            familyHeadName,
+          },
+          members: formattedMembers,
+        }
+      };
 
-      showToast('Family Survey saved successfully!', 'success');
+      if (!navigator.onLine) {
+        await addToQueue('/api/surveySubmissions', {
+          method: 'POST',
+          body: payload
+        });
+        showToast('Offline: Family survey queued for sync', 'info');
+      } else {
+        await apiFetch('/api/surveySubmissions', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        showToast('Family Survey saved successfully!', 'success');
+      }
       setTimeout(() => navigate(-1), 1000);
     } catch (err) {
-      console.error(err);
-      showToast('Error saving data. Will sync later.', 'error');
+      console.error('Error saving family survey:', err);
+      if (payload) {
+        try {
+          await addToQueue('/api/surveySubmissions', {
+            method: 'POST',
+            body: payload
+          });
+          showToast('Network issue: Saved to offline sync queue', 'info');
+          setTimeout(() => navigate(-1), 1000);
+          return;
+        } catch (queueErr) {
+          console.error('Queue save failed:', queueErr);
+        }
+      }
+      showToast('Error saving survey. Please try again.', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -283,6 +321,7 @@ export default React.memo(function FamilySurvey() {
       abha_id: '', birth_register_serial: '',
       reason_removed_from_register: '',
       noAadhaar: false, temporaryId: '',
+      is_pregnant: false,
       has_genetic_condition: false, genetic_conditions: '', genetic_condition_notes: '',
       voiceFilled: [], isDuplicate: false, existingId: null
     }]);
@@ -501,11 +540,46 @@ export default React.memo(function FamilySurvey() {
                         {getVoiceTag(member.id, 'relationship_to_head')}
                      </div>
                      <div>
+                        <label className="block text-sm font-medium mb-1 text-[#5F5E5A]">Marital Status</label>
+                        <select value={member.marital_status || ''} onChange={e => updateMember(index, 'marital_status', e.target.value)} className={getInputClass(member.id, 'marital_status')}>
+                          <option value="">Select...</option>
+                          <option value="Married">Married</option>
+                          <option value="Unmarried">Unmarried</option>
+                          <option value="Widow">Widow</option>
+                          <option value="Separated">Separated</option>
+                        </select>
+                        {getVoiceTag(member.id, 'marital_status')}
+                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                     <div>
                         <label className="block text-sm font-medium mb-1 text-[#5F5E5A]">Mobile</label>
                         <input type="tel" maxLength={10} value={member.mobile_number} onChange={e => updateMember(index, 'mobile_number', e.target.value)} className={getInputClass(member.id, 'mobile_number')} placeholder="10 digits" />
                         {getVoiceTag(member.id, 'mobile_number')}
                      </div>
+                     <div>
+                        <label className="block text-sm font-medium mb-1 text-[#5F5E5A]">ABHA ID (Optional)</label>
+                        <input type="text" value={member.abha_id || ''} onChange={e => updateMember(index, 'abha_id', e.target.value)} className={getInputClass(member.id, 'abha_id')} placeholder="14 digits" />
+                     </div>
                   </div>
+
+                  {member.gender === 'Female' && (
+                    <div className="bg-pink-50 border border-pink-200 rounded-xl p-3 flex items-center justify-between">
+                      <label className="flex items-center gap-2 cursor-pointer font-medium text-pink-900">
+                        <input 
+                          type="checkbox" 
+                          className="w-5 h-5 text-pink-600 rounded focus:ring-pink-500" 
+                          checked={member.is_pregnant || false} 
+                          onChange={e => updateMember(index, 'is_pregnant', e.target.checked)} 
+                        />
+                        <span>Currently Pregnant (Auto-link to ANC)</span>
+                      </label>
+                      {member.is_pregnant && (
+                        <span className="text-xs bg-pink-200 text-pink-800 font-bold px-2 py-1 rounded">Draft ANC</span>
+                      )}
+                    </div>
+                  )}
 
                   <div className="border-t pt-4 mt-2">
                     <label className="flex items-center gap-2 cursor-pointer mb-3">

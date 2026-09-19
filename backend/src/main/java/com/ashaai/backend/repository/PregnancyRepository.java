@@ -13,4 +13,6 @@ public interface PregnancyRepository extends JpaRepository<Pregnancy, UUID> {
     
     @Query("SELECT p FROM Pregnancy p WHERE p.asha.id = :ashaId AND p.status IN ('active', 'draft')")
     List<Pregnancy> findActiveOrDraftPregnancies(UUID ashaId);
+
+    List<Pregnancy> findByMotherMember_Id(UUID motherMemberId);
 }

@@ -20,8 +20,28 @@ const initDB = () => {
   });
 };
 
+export const getOfflineQueueCount = async () => {
+  try {
+    const db = await initDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const countReq = store.count();
+      countReq.onsuccess = () => resolve(countReq.result || 0);
+      countReq.onerror = () => resolve(0);
+    });
+  } catch (e) {
+    return 0;
+  }
+};
+
 const useOfflineQueue = () => {
-  const { isOnline, incrementPending, decrementPending } = useSyncStore();
+  const { isOnline } = useSyncStore();
+
+  const syncPendingCount = async () => {
+    const count = await getOfflineQueueCount();
+    useSyncStore.getState().setPendingCount(count);
+  };
 
   const addToQueue = async (url, options) => {
     const db = await initDB();
@@ -42,7 +62,7 @@ const useOfflineQueue = () => {
         timestamp: Date.now()
       });
       tx.oncomplete = () => {
-        incrementPending();
+        syncPendingCount();
         resolve(true);
       };
       tx.onerror = () => reject(tx.error);
@@ -59,7 +79,10 @@ const useOfflineQueue = () => {
 
     request.onsuccess = async () => {
       const items = request.result;
-      if (items.length === 0) return;
+      if (items.length === 0) {
+        syncPendingCount();
+        return;
+      }
 
       for (const item of items) {
         try {
@@ -74,7 +97,7 @@ const useOfflineQueue = () => {
           // If successful, delete from queue
           const deleteTx = db.transaction(STORE_NAME, 'readwrite');
           deleteTx.objectStore(STORE_NAME).delete(item.id);
-          deleteTx.oncomplete = () => decrementPending();
+          deleteTx.oncomplete = () => syncPendingCount();
         } catch (e) {
           console.error("Failed to process queued item", item, e);
         }
@@ -82,14 +105,15 @@ const useOfflineQueue = () => {
     };
   };
 
-  // Attempt to process queue when component mounts or reconnects
+  // Sync count from IndexedDB on mount and whenever connection changes
   useEffect(() => {
+    syncPendingCount();
     if (isOnline) {
       processQueue();
     }
   }, [isOnline]);
 
-  return { addToQueue, processQueue };
+  return { addToQueue, processQueue, syncPendingCount };
 };
 
 export default useOfflineQueue;

@@ -380,6 +380,8 @@ public class NgoController {
             appt.setScheduledAt(OffsetDateTime.now().plusDays(3));
         }
 
+        appt.setPurpose(purpose);
+
         NgoAppointment saved = ngoAppointmentRepository.save(appt);
         logger.info("event=ngo_appointment_booked appointment_id={} ngo_id={}", saved.getId(), ngo.getId());
 

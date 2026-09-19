@@ -12,5 +12,6 @@ import java.util.UUID;
 public interface ChildRepository extends JpaRepository<Child, UUID> {
     List<Child> findByHouseholdMember_Household_Id(UUID householdId);
     List<Child> findByAshaId(UUID ashaId);
-    Optional<Child> findByHouseholdMember_Id(UUID householdMemberId);
+    List<Child> findByHouseholdMember_Id(UUID householdMemberId);
+    Optional<Child> findFirstByHouseholdMember_Id(UUID householdMemberId);
 }

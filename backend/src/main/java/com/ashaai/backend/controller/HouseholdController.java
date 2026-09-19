@@ -23,19 +23,29 @@ public class HouseholdController {
     }
 
     @GetMapping
-    public ResponseEntity<List<Household>> getHouseholds(org.springframework.security.core.Authentication authentication) { com.ashaai.backend.security.AshaAuthenticationToken auth = (com.ashaai.backend.security.AshaAuthenticationToken) authentication;
-        // Find households for the current Asha
-        List<Household> all = householdRepository.findAll();
-        List<Household> ashasHouseholds = all.stream()
-                .filter(h -> h.getAsha() != null && h.getAsha().getId().equals(auth.getAshaId()))
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(ashasHouseholds);
+    public ResponseEntity<List<Household>> getHouseholds(
+            @RequestParam(required = false) UUID ashaId,
+            org.springframework.security.core.Authentication authentication) {
+        UUID effectiveAshaId = ashaId;
+        if (effectiveAshaId == null && authentication instanceof AshaAuthenticationToken auth) {
+            effectiveAshaId = auth.getAshaId();
+        }
+        if (effectiveAshaId != null) {
+            return ResponseEntity.ok(householdRepository.findByAsha_Id(effectiveAshaId));
+        }
+        return ResponseEntity.ok(householdRepository.findAll());
     }
     
     @PostMapping
-    public ResponseEntity<Household> createHousehold(@RequestBody Household household, org.springframework.security.core.Authentication authentication) { com.ashaai.backend.security.AshaAuthenticationToken auth = (com.ashaai.backend.security.AshaAuthenticationToken) authentication;
-        // TODO: Map from DTO properly
-        // For phase 2 testing, accept entity directly for now
+    public ResponseEntity<Household> createHousehold(
+            @RequestBody Household household,
+            org.springframework.security.core.Authentication authentication) {
+        if (household.getCreatedAt() == null) {
+            household.setCreatedAt(java.time.OffsetDateTime.now());
+        }
+        if (household.getUpdatedAt() == null) {
+            household.setUpdatedAt(java.time.OffsetDateTime.now());
+        }
         return ResponseEntity.status(HttpStatus.CREATED).body(householdRepository.save(household));
     }
 }

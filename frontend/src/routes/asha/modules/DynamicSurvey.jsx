@@ -31,7 +31,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import {
   Home as HouseIcon, User, Baby, Syringe, Heart, Stethoscope, ClipboardList,
   Microscope, Eye, Hand, Pill, Bandage, Users, MapPin, Droplet, Shield, LineChart, Leaf,
-  Activity, Thermometer, Clipboard, BookOpen, Brain, Star, Globe
+  Activity, Thermometer, Clipboard, BookOpen, Brain, Star, Globe, HeartPulse
 } from 'lucide-react';
 
 // Maps icon names (from DB) to lucide-react components
@@ -51,6 +51,7 @@ const ICON_MAP = {
   pregnant: <User className="w-6 h-6" />,
   elderly: <User className="w-6 h-6" />,
   family: <Users className="w-6 h-6" />,
+  users: <Users className="w-6 h-6" />,
   village: <MapPin className="w-6 h-6" />,
   water: <Droplet className="w-6 h-6" />,
   shield: <Shield className="w-6 h-6" />,
@@ -62,6 +63,7 @@ const ICON_MAP = {
   brain: <Brain className="w-6 h-6" />,
   star: <Star className="w-6 h-6" />,
   globe: <Globe className="w-6 h-6" />,
+  heartpulse: <HeartPulse className="w-6 h-6" />,
 };
 
 /**
@@ -196,7 +198,8 @@ export default function DynamicSurvey() {
 
   // ── Lucide icon from DB ─────────────────────────────────────────────────
   // template.icon is the DB column (e.g. "baby", "heart")
-  const lucideIcon = template.icon ? (ICON_MAP[template.icon] || ICON_MAP['clipboard']) : null;
+  const iconKey = (template.icon || 'clipboard').toLowerCase();
+  const lucideIcon = template.icon ? (ICON_MAP[iconKey] || ICON_MAP['clipboard']) : null;
 
   // ── collection / routing ────────────────────────────────────────────────
   // Built-in modules have a moduleKey that maps to a real Postgres table
