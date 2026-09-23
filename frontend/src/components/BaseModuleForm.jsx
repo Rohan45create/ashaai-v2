@@ -8,6 +8,7 @@ import AadhaarAutofill from './AadhaarAutofill';
 import { useTx } from '../context/TranslationContext';
 import MalnutritionScannerWidget from './widgets/MalnutritionScannerWidget';
 import MemberLookupField from './MemberLookupField';
+import { parseToIsoDate, normalizeGender, extractDobFromText } from '../utils/formDateUtils';
 
 /**
  * Evaluates a show_if spec against the current formData.
@@ -177,21 +178,155 @@ export default function BaseModuleForm({ title, moduleIcon, templateIcon, collec
   }, []);
 
   const handleVoiceFilled = (structuredData) => {
-    if (structuredData && typeof structuredData === 'object') {
-      const newFilledFields = [];
-      setFormData(prev => {
-        const merged = { ...prev };
-        Object.entries(structuredData).forEach(([key, value]) => {
-          if (value !== null && value !== undefined && value !== '') {
-            merged[key] = value;
-            newFilledFields.push(key);
+    if (!structuredData || typeof structuredData !== 'object') return;
+    const newFilledFields = [];
+
+    // Map of existing form fields
+    const fieldMap = new Map((fields || []).map(f => [f.id, f]));
+
+    setFormData(prev => {
+      const merged = { ...prev };
+
+      // Helper to set a field value with type normalization
+      const setVal = (fieldId, rawVal) => {
+        if (rawVal === null || rawVal === undefined || rawVal === '') return;
+        const fieldDef = fieldMap.get(fieldId);
+        let finalVal = rawVal;
+
+        if (fieldDef) {
+          // Normalize dates to YYYY-MM-DD
+          if (fieldDef.type === 'date') {
+            const parsed = parseToIsoDate(String(rawVal));
+            if (parsed && /^\d{4}-\d{2}-\d{2}$/.test(parsed)) {
+              finalVal = parsed;
+            }
           }
-        });
-        return merged;
+          // Normalize numbers
+          else if (fieldDef.type === 'number') {
+            const num = parseFloat(String(rawVal).replace(/[^0-9.]/g, ''));
+            if (!isNaN(num)) {
+              finalVal = num;
+            }
+          }
+          // Normalize select options (case-insensitive & label matching)
+          else if (fieldDef.type === 'select' && Array.isArray(fieldDef.options)) {
+            const sVal = String(rawVal).trim().toLowerCase();
+            const matchedOpt = fieldDef.options.find(opt => {
+              const valMatch = (typeof opt === 'string' ? opt : opt.value || '').toLowerCase() === sVal;
+              const labelMatch = (typeof opt === 'string' ? opt : opt.label || '').toLowerCase().includes(sVal);
+              return valMatch || labelMatch;
+            });
+            if (matchedOpt) {
+              finalVal = typeof matchedOpt === 'string' ? matchedOpt : matchedOpt.value;
+            }
+          }
+        } else if (typeof rawVal === 'string' && (rawVal.includes('/') || rawVal.includes('-') || /[a-zA-Z]/.test(rawVal))) {
+          // Check if it's a date even without fieldDef
+          const maybeDate = parseToIsoDate(rawVal);
+          if (maybeDate && /^\d{4}-\d{2}-\d{2}$/.test(maybeDate)) {
+            finalVal = maybeDate;
+          }
+        }
+
+        merged[fieldId] = finalVal;
+        newFilledFields.push(fieldId);
+      };
+
+      // 1. First apply exact matching keys
+      Object.entries(structuredData).forEach(([key, value]) => {
+        if (fieldMap.has(key)) {
+          setVal(key, value);
+        }
       });
-      setVoiceFilledFields(prev => [...new Set([...prev, ...newFilledFields])]);
-      showToast(tx('Voice data applied to form'), 'success');
-    }
+
+      // 2. Intelligent Aliases for module-specific field IDs when general keys are returned
+      // A. Names
+      const generalName = structuredData.name || structuredData.full_name || structuredData.member_name || structuredData.person_name;
+      if (generalName) {
+        for (const targetId of ['child_name', 'baby_name', 'patientName', 'elderlyName', 'deceasedName', 'mother_name', 'member_name']) {
+          if (fieldMap.has(targetId) && !merged[targetId]) {
+            setVal(targetId, generalName);
+            break;
+          }
+        }
+      }
+
+      // Mother name specifically
+      const motherName = structuredData.mother_name || structuredData.pregnant_woman_name;
+      if (motherName && fieldMap.has('mother_name') && !merged['mother_name']) {
+        setVal('mother_name', motherName);
+      }
+
+      // Husband / Father name
+      const husbandOrFather = structuredData.husband_name || structuredData.father_name || structuredData.spouse_name;
+      if (husbandOrFather) {
+        if (fieldMap.has('husband_name') && !merged['husband_name']) setVal('husband_name', husbandOrFather);
+        else if (fieldMap.has('father_name') && !merged['father_name']) setVal('father_name', husbandOrFather);
+      }
+
+      // B. Dates
+      let generalDob = structuredData.date_of_birth || structuredData.dob || structuredData.birth_date ||
+                       structuredData.birthdate || structuredData.dateOfBirth || structuredData.date;
+      if (!generalDob) {
+        for (const [k, v] of Object.entries(structuredData)) {
+          if (/^(date_?of_?birth|dob|birth_?date|birthdate|जन्मतारीख|जन्म\s*तारीख)/i.test(k) && v) {
+            generalDob = v;
+            break;
+          }
+        }
+      }
+      if (!generalDob) {
+        const transcriptText = structuredData._transcript || structuredData.transcript || '';
+        generalDob = extractDobFromText(transcriptText);
+      }
+      if (generalDob) {
+        for (const targetId of ['birth_date', 'date_of_birth', 'dob', 'dateOfDeath', 'lmp_date', 'registration_date', 'date_given']) {
+          if (fieldMap.has(targetId) && !merged[targetId]) {
+            setVal(targetId, generalDob);
+            break;
+          }
+        }
+      }
+
+      // C. Gender
+      const generalGender = structuredData.gender || structuredData.sex || structuredData.baby_gender;
+      if (generalGender) {
+        for (const targetId of ['gender', 'baby_gender', 'sex']) {
+          if (fieldMap.has(targetId) && !merged[targetId]) {
+            setVal(targetId, generalGender);
+            break;
+          }
+        }
+      }
+
+      // D. Age / Age months / Age at death
+      const generalAge = structuredData.age || structuredData.age_months || structuredData.age_years || structuredData.ageAtDeath;
+      if (generalAge !== undefined && generalAge !== null && generalAge !== '') {
+        if (fieldMap.has('age_months') && !merged['age_months']) {
+          const num = parseInt(String(generalAge).replace(/\D+/g, ''), 10);
+          if (!isNaN(num)) setVal('age_months', num);
+        } else if (fieldMap.has('ageAtDeath') && !merged['ageAtDeath']) {
+          const num = parseInt(String(generalAge).replace(/\D+/g, ''), 10);
+          if (!isNaN(num)) setVal('ageAtDeath', num);
+        } else if (fieldMap.has('age') && !merged['age']) {
+          const num = parseInt(String(generalAge).replace(/\D+/g, ''), 10);
+          if (!isNaN(num)) setVal('age', num);
+        }
+      }
+
+      // E. Pass-through remaining keys not yet in merged
+      Object.entries(structuredData).forEach(([key, value]) => {
+        if (!merged[key] && value !== null && value !== undefined && value !== '') {
+          setVal(key, value);
+        }
+      });
+
+      if (onFormChange) onFormChange(merged);
+      return merged;
+    });
+
+    setVoiceFilledFields(prev => [...new Set([...prev, ...newFilledFields])]);
+    showToast(tx('Voice data applied to form'), 'success');
   };
 
   // Aadhaar autofill handler

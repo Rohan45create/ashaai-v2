@@ -50,8 +50,8 @@ NEAR_AI_DEFAULT_BASE_URL = "https://cloud-api.near.ai/v1"
 NEAR_AI_DEFAULT_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 NEAR_AI_DEFAULT_MULTIMODAL_MODEL = "meta-llama/Llama-3.2-11B-Vision-Instruct"
 GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
-GEMINI_DEFAULT_MODEL = "gemini-3.6-flash"          # text / call_text path
-GEMINI_MULTIMODAL_DEFAULT_MODEL = "gemini-3.6-flash"  # image+audio / call_multimodal path
+GEMINI_DEFAULT_MODEL = "gemini-3.6-flash"          # text / call_text path (override: GEMINI_MODEL)
+GEMINI_MULTIMODAL_DEFAULT_MODEL = "gemini-3.5-flash-lite"  # image+audio / call_multimodal path (override: GEMINI_MULTIMODAL_MODEL)
 
 HF_SARVAM_DEFAULT_MODEL = "sarvamai/sarvam-30b"
 HF_INDICTRANS_DEFAULT_MODEL = "ai4bharat/indictrans2-en-indic"
@@ -293,7 +293,7 @@ def _call_hf_indic_whisper(
     model = os.getenv("HF_INDICWHISPER_MODEL", HF_INDICWHISPER_DEFAULT_MODEL)
     media_bytes = _extract_bytes(audio_or_image)
     try:
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=httpx.Timeout(15.0, connect=3.0)) as client:
             resp = client.post(
                 f"https://api-inference.huggingface.co/models/{model}",
                 headers={"Authorization": f"Bearer {api_key}"},
@@ -424,7 +424,7 @@ def _call_gemini_multimodal(
 
     media_bytes = _extract_bytes(audio_or_image)
     client = genai.Client(api_key=api_key)
-    model = os.getenv("GEMINI_MULTIMODAL_MODEL", GEMINI_MULTIMODAL_DEFAULT_MODEL)
+    primary_model = os.getenv("GEMINI_MULTIMODAL_MODEL", GEMINI_MULTIMODAL_DEFAULT_MODEL)
 
     contents = types.Content(
         role="user",
@@ -441,27 +441,59 @@ def _call_gemini_multimodal(
 
     config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
-    last_exc: Exception
-    for attempt in range(2):
-        try:
-            response = client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=config,
-            )
-            raw_text = response.text or ""
-            if response_schema:
-                return response_schema.model_validate_json(_clean_json_text(raw_text))
-            return raw_text
-        except Exception as exc:
-            last_exc = exc
-            err_str = str(exc)
-            if "503" in err_str or "UNAVAILABLE" in err_str:
-                if attempt == 0:
-                    logger.warning("gemini_multimodal_503_retrying", model=model, attempt=attempt + 1)
+    # Candidate models pool ordered by lowest traffic / highest availability.
+    # If the primary model experiences high demand (503) or rate limits (429),
+    # the inference automatically fails over to the next candidate model in the pool.
+    candidate_models = [primary_model]
+    for m in ("gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash"):
+        if m not in candidate_models:
+            candidate_models.append(m)
+
+    last_exc: Exception = RuntimeError("All candidate Gemini multimodal models failed.")
+    for model_candidate in candidate_models:
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=model_candidate,
+                    contents=contents,
+                    config=config,
+                )
+                raw_text = response.text or ""
+                if model_candidate != primary_model or attempt > 0:
+                    logger.info(
+                        "gemini_multimodal_succeeded",
+                        model=model_candidate,
+                        attempt=attempt,
+                        fallback=(model_candidate != primary_model),
+                    )
+                if response_schema:
+                    return response_schema.model_validate_json(_clean_json_text(raw_text))
+                return raw_text
+            except Exception as exc:
+                last_exc = exc
+                err_str = str(exc)
+                is_transient = any(
+                    code in err_str
+                    for code in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "high demand")
+                )
+                if is_transient:
+                    logger.warning(
+                        "gemini_multimodal_transient_error",
+                        model=model_candidate,
+                        attempt=attempt + 1,
+                        error=err_str[:250],
+                    )
+                    # If this model is experiencing high demand, break immediately to the next candidate in the pool
+                    if attempt == 0 and len(candidate_models) > 1 and model_candidate != candidate_models[-1]:
+                        logger.info(
+                            "gemini_multimodal_failing_over_to_next_candidate",
+                            failed_model=model_candidate,
+                        )
+                        break
                     _time.sleep(2)
                     continue
-            raise
+                # If error is not transient (e.g. invalid arguments), re-raise immediately
+                raise
     raise last_exc
 
 

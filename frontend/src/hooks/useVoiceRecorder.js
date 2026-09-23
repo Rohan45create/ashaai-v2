@@ -95,11 +95,37 @@ export const useVoiceRecorder = (moduleType = 'family_survey', onFieldsFilled, f
         body: formData,
       });
       setTranscript(data.transcript || '');
-      setDetectedCount(data.fields_detected || Object.keys(data.fields || {}).length || 0);
 
-      if (data.fields && Object.keys(data.fields).length > 0) {
+      // Merge data.fields with any top-level scalar fields returned by the AI endpoint
+      const mergedFields = { ...(data.fields || {}) };
+      if (data.name && !mergedFields.name && !mergedFields.member_name && !mergedFields.child_name) {
+        mergedFields.name = data.name;
+      }
+      if (data.gender && !mergedFields.gender && !mergedFields.baby_gender) {
+        mergedFields.gender = data.gender;
+      }
+      if (data.age !== undefined && data.age !== null && mergedFields.age === undefined && mergedFields.age_months === undefined) {
+        mergedFields.age = data.age;
+      }
+      if (data.date_of_birth && !mergedFields.date_of_birth && !mergedFields.dob && !mergedFields.birth_date) {
+        mergedFields.date_of_birth = data.date_of_birth;
+      }
+      if (data.relationship && !mergedFields.relationship && !mergedFields.relationship_to_head) {
+        mergedFields.relationship = data.relationship;
+      }
+      if (data.is_pregnant !== undefined && mergedFields.is_pregnant === undefined) {
+        mergedFields.is_pregnant = data.is_pregnant;
+      }
+      if (data.transcript) {
+        mergedFields._transcript = data.transcript;
+      }
+
+      const detected = Object.keys(mergedFields).filter(k => !k.startsWith('_')).length;
+      setDetectedCount(data.fields_detected || detected || 0);
+
+      if (detected > 0) {
         if (typeof onFieldsFilled === 'function') {
-          onFieldsFilled(data.fields);
+          onFieldsFilled(mergedFields);
         }
         setState('done');
       } else {

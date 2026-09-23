@@ -8,6 +8,7 @@ class VoiceExtractionResponse(BaseModel):
     name: Optional[str] = Field(None, description="Legacy field for family member")
     gender: Optional[str] = Field(None, description="Legacy field for gender")
     age: Optional[int] = Field(None, description="Legacy field for age")
+    date_of_birth: Optional[str] = Field(None, description="Extracted date of birth in ISO YYYY-MM-DD format")
     is_pregnant: Optional[bool] = Field(False, description="Legacy field for pregnancy")
     relationship: Optional[str] = Field(None, description="Legacy field for relationship")
 

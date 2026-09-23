@@ -7,6 +7,18 @@ import useOfflineQueue from '../../../hooks/useOfflineQueue';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import AmbientToggle from '../../../components/AmbientToggle';
 import VoiceOverlay from '../../../components/VoiceOverlay';
+import { parseToIsoDate, calculateAgeFromDob, extractDobFromText, normalizeGender, normalizeRelationship, normalizeMaritalStatus } from '../../../utils/formDateUtils';
+
+const FAMILY_MEMBER_FIELDS = [
+  { id: 'member_name', label: 'Full Name / पूर्ण नाव / Name', type: 'text' },
+  { id: 'gender', label: 'Gender / लिंग (Male / Female / Other)', type: 'select' },
+  { id: 'date_of_birth', label: 'Date of Birth / जन्मतारीख (YYYY-MM-DD)', type: 'date' },
+  { id: 'age', label: 'Age (years) / वय', type: 'number' },
+  { id: 'relationship_to_head', label: 'Relationship / नाते (Self / Spouse / Son / Daughter / Father / Mother / Other)', type: 'select' },
+  { id: 'marital_status', label: 'Marital Status / वैवाहिक स्थिती (Married / Unmarried / Widow / Separated)', type: 'select' },
+  { id: 'mobile_number', label: 'Mobile Number / मोबाईल नंबर (10 digits)', type: 'tel' },
+  { id: 'abha_id', label: 'ABHA ID', type: 'text' },
+];
 
 async function hashAadhaar(aadhaarString) {
   if (!aadhaarString) return null;
@@ -267,19 +279,124 @@ export default React.memo(function FamilySurvey() {
   };
   
   const handleVoiceData = (structuredData) => {
-    if (!structuredData) return;
+    if (!structuredData || typeof structuredData !== 'object') return;
+    
+    // Auto-expand target card so user can immediately see populated fields
+    const targetIdx = expandedMember === -1 ? 0 : expandedMember;
+    setExpandedMember(targetIdx);
+
     setMembers((prev) => {
       const copy = [...prev];
-      const targetIndex = expandedMember === -1 ? 0 : expandedMember;
-      const m = copy[targetIndex];
+      const targetIndex = targetIdx < copy.length ? targetIdx : 0;
+      const m = { ...copy[targetIndex] };
       
       const newFilled = [];
-      if (structuredData.member_name) { m.member_name = structuredData.member_name; newFilled.push('member_name'); }
-      if (structuredData.gender) { m.gender = structuredData.gender; newFilled.push('gender'); }
-      if (structuredData.date_of_birth) { m.date_of_birth = structuredData.date_of_birth; newFilled.push('date_of_birth'); }
-      if (structuredData.age) { m.age = structuredData.age; newFilled.push('age'); }
-      if (structuredData.relationship_to_head) { m.relationship_to_head = structuredData.relationship_to_head; newFilled.push('relationship_to_head'); }
-      if (structuredData.mobile_number) { m.mobile_number = structuredData.mobile_number; newFilled.push('mobile_number'); }
+
+      // Name — support multiple possible keys from voice extraction
+      const rawName = structuredData.member_name || structuredData.name || structuredData.full_name || structuredData.person_name;
+      if (rawName) {
+        m.member_name = String(rawName).trim();
+        newFilled.push('member_name');
+      }
+
+      // Gender — normalize English/Hindi/Marathi
+      const rawGender = structuredData.gender || structuredData.sex;
+      if (rawGender) {
+        const normGender = normalizeGender(rawGender);
+        if (normGender) {
+          m.gender = normGender;
+          newFilled.push('gender');
+        }
+      }
+
+      // Date of Birth — HTML5 date inputs strictly require YYYY-MM-DD
+      let rawDob = structuredData.date_of_birth || structuredData.dob || structuredData.birth_date ||
+                   structuredData.birthdate || structuredData.dateOfBirth || structuredData.date;
+      
+      // Also inspect structuredData for any key variation
+      if (!rawDob) {
+        for (const [k, v] of Object.entries(structuredData)) {
+          if (/^(date_?of_?birth|dob|birth_?date|birthdate|जन्मतारीख|जन्म\s*तारीख)/i.test(k) && v) {
+            rawDob = v;
+            break;
+          }
+        }
+      }
+
+      // If still missing, attempt regex extraction from transcript
+      if (!rawDob) {
+        const transcriptText = structuredData._transcript || structuredData.transcript || '';
+        rawDob = extractDobFromText(transcriptText);
+      }
+
+      if (rawDob) {
+        const parsedDob = parseToIsoDate(rawDob);
+        if (parsedDob && /^\d{4}-\d{2}-\d{2}$/.test(parsedDob)) {
+          m.date_of_birth = parsedDob;
+          newFilled.push('date_of_birth');
+          // Auto-compute age if age was not explicitly dictated
+          if (!m.age && !structuredData.age) {
+            const calcAge = calculateAgeFromDob(parsedDob);
+            if (calcAge !== null && calcAge >= 0) {
+              m.age = String(calcAge);
+              newFilled.push('age');
+            }
+          }
+        }
+      }
+
+      // Age (years)
+      const rawAge = structuredData.age || structuredData.age_years;
+      if (rawAge !== undefined && rawAge !== null && rawAge !== '') {
+        const numAge = parseInt(String(rawAge).replace(/\D+/g, ''), 10);
+        if (!isNaN(numAge)) {
+          m.age = String(numAge);
+          if (!newFilled.includes('age')) newFilled.push('age');
+        }
+      }
+
+      // Relationship to head
+      const rawRel = structuredData.relationship_to_head || structuredData.relationship || structuredData.relation;
+      if (rawRel) {
+        const normRel = normalizeRelationship(rawRel);
+        if (normRel) {
+          m.relationship_to_head = normRel;
+          newFilled.push('relationship_to_head');
+        }
+      }
+
+      // Marital status
+      const rawMarital = structuredData.marital_status || structuredData.marital;
+      if (rawMarital) {
+        const normMarital = normalizeMaritalStatus(rawMarital);
+        if (normMarital) {
+          m.marital_status = normMarital;
+          newFilled.push('marital_status');
+        }
+      }
+
+      // Mobile number
+      const rawMobile = structuredData.mobile_number || structuredData.mobile || structuredData.phone;
+      if (rawMobile) {
+        const digits = String(rawMobile).replace(/\D+/g, '');
+        if (digits.length >= 10) {
+          m.mobile_number = digits.slice(-10);
+          newFilled.push('mobile_number');
+        }
+      }
+
+      // ABHA ID
+      const rawAbha = structuredData.abha_id || structuredData.abha;
+      if (rawAbha) {
+        m.abha_id = String(rawAbha).trim();
+      }
+
+      // Pregnant flag
+      if (structuredData.is_pregnant !== undefined) {
+        m.is_pregnant = Boolean(structuredData.is_pregnant);
+      }
+
+      copy[targetIndex] = m;
       
       setVoiceFilledFields((prevV) => ({
         ...prevV, [m.id]: [...new Set([...(prevV[m.id]||[]), ...newFilled])]
@@ -520,7 +637,7 @@ export default React.memo(function FamilySurvey() {
                     </div>
                     <div>
                       <label className="block text-sm font-medium mb-1 text-[#5F5E5A]">Age / DOB <span className="text-[#E24B4A]">*</span></label>
-                      <input type="date" required={!member.age} value={member.date_of_birth} onChange={e => updateMember(index, 'date_of_birth', e.target.value)} className={getInputClass(member.id, 'date_of_birth')} />
+                      <input type="date" required={!member.age} value={member.date_of_birth || ''} onChange={e => updateMember(index, 'date_of_birth', e.target.value)} className={getInputClass(member.id, 'date_of_birth')} />
                       {getVoiceTag(member.id, 'date_of_birth')}
                     </div>
                   </div>
@@ -656,6 +773,7 @@ export default React.memo(function FamilySurvey() {
       {showVoice && (
         <VoiceOverlay 
           moduleType="family_survey" 
+          formFields={FAMILY_MEMBER_FIELDS}
           onFieldsFilled={handleVoiceData} 
           onClose={() => setShowVoice(false)}
         />

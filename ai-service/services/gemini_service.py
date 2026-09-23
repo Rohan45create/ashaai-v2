@@ -7,6 +7,7 @@ per docs/RULES.md and docs/ARCHITECTURE.md. Direct SDK usage is prohibited.
 from typing import Optional, Dict, Any
 import json
 import logging
+import re
 import time
 import os
 import cv2
@@ -71,6 +72,7 @@ class GeminiVoiceExtractionResponse(BaseModel):
     name: Optional[str] = Field(None, description="Legacy field for family member")
     gender: Optional[str] = Field(None, description="Legacy field for gender")
     age: Optional[int] = Field(None, description="Legacy field for age")
+    date_of_birth: Optional[str] = Field(None, description="Extracted date of birth in ISO YYYY-MM-DD format (e.g. 2006-07-25)")
     is_pregnant: Optional[bool] = Field(False, description="Legacy field for pregnancy")
     relationship: Optional[str] = Field(None, description="Legacy field for relationship")
 
@@ -89,6 +91,83 @@ class GeminiRegisterOcrResponse(BaseModel):
     total_rows_found: int = Field(default=0, description="Total number of rows extracted")
     rows: list[GeminiRegisterRow] = Field(default_factory=list, description="Extracted rows from register")
     confidence: float = Field(default=1.0, description="Overall confidence score between 0.0 and 1.0")
+
+_MONTHS_MAP = {
+    'january': 1, 'jan': 1, 'february': 2, 'feb': 2, 'march': 3, 'mar': 3,
+    'april': 4, 'apr': 4, 'may': 5, 'june': 6, 'jun': 6, 'july': 7, 'jul': 7,
+    'august': 8, 'aug': 8, 'september': 9, 'sep': 9, 'sept': 9, 'october': 10,
+    'oct': 10, 'november': 11, 'nov': 11, 'december': 12, 'dec': 12,
+    # Marathi months
+    'जानेवारी': 1, 'फेब्रुवारी': 2, 'मार्च': 3, 'एप्रिल': 4,
+    'मे': 5, 'जून': 6, 'जुलै': 7, 'ऑगस्ट': 8,
+    'सप्टेंबर': 9, 'ऑक्टोबर': 10, 'नोव्हेंबर': 11, 'डिसेंबर': 12,
+    # Hindi months
+    'जनवरी': 1, 'फरवरी': 2, 'अप्रैल': 4, 'मई': 5,
+    'जुलाई': 7, 'अगस्त': 8, 'सितंबर': 9, 'अक्टूबर': 10,
+    'नवंबर': 11, 'दिसंबर': 12,
+}
+
+_DEVANAGARI_DIGITS_TRANS = str.maketrans('०१२३४५६७८९', '0123456789')
+
+def _parse_date_to_iso(val: Any) -> str:
+    if not val:
+        return ""
+    s = str(val).translate(_DEVANAGARI_DIGITS_TRANS).strip()
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', s):
+        return s
+    
+    # 25 July 2006 or 25th July 2006 or 25 जुलै 2006
+    m = re.match(r'^(\d{1,2})(?:st|nd|rd|th)?\s+([a-zA-Z\u0900-\u097F]+)\s+(\d{4})$', s)
+    if m:
+        day, mon_str, year = int(m.group(1)), m.group(2).lower(), int(m.group(3))
+        mon = _MONTHS_MAP.get(mon_str)
+        if mon and 1 <= day <= 31 and 1900 <= year <= 2100:
+            return f"{year:04d}-{mon:02d}-{day:02d}"
+            
+    # July 25, 2006
+    m = re.match(r'^([a-zA-Z\u0900-\u097F]+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(\d{4})$', s)
+    if m:
+        mon_str, day, year = m.group(1).lower(), int(m.group(2)), int(m.group(3))
+        mon = _MONTHS_MAP.get(mon_str)
+        if mon and 1 <= day <= 31 and 1900 <= year <= 2100:
+            return f"{year:04d}-{mon:02d}-{day:02d}"
+            
+    # DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    m = re.match(r'^(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{4})$', s)
+    if m:
+        day, mon, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= mon <= 12 and 1 <= day <= 31 and 1900 <= year <= 2100:
+            return f"{year:04d}-{mon:02d}-{day:02d}"
+            
+    # YYYY/MM/DD or YYYY.MM.DD
+    m = re.match(r'^(\d{4})[/\-\.](\d{1,2})[/\-\.](\d{1,2})$', s)
+    if m:
+        year, mon, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= mon <= 12 and 1 <= day <= 31:
+            return f"{year:04d}-{mon:02d}-{day:02d}"
+
+    return s
+
+def _extract_dob_from_text(raw: str) -> Optional[str]:
+    """Scans text or transcript for spoken date of birth in English, Marathi, or Hindi."""
+    if not raw:
+        return None
+    text = str(raw).translate(_DEVANAGARI_DIGITS_TRANS)
+    patterns = [
+        r'(?:date\s+of\s+birth|birth\s*date|dob|born\s+on|born|जन्मतारीख|जन्म\s*तारीख)\s*(?:is|:|-)?\s*(\d{1,2}(?:st|nd|rd|th)?\s+[a-zA-Z\u0900-\u097F]+(?:,)?\s+\d{4})',
+        r'(?:date\s+of\s+birth|birth\s*date|dob|born\s+on|born|जन्मतारीख|जन्म\s*तारीख)\s*(?:is|:|-)?\s*([a-zA-Z\u0900-\u097F]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,)?\s+\d{4})',
+        r'(?:date\s+of\s+birth|birth\s*date|dob|born\s+on|born|जन्मतारीख|जन्म\s*तारीख)\s*(?:is|:|-)?\s*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{4})',
+        r'(\d{1,2}(?:st|nd|rd|th)?\s+(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|जुलै|जुलाई|जानेवारी|फेब्रुवारी|मार्च|एप्रिल|मे|जून|ऑगस्ट|सप्टेंबर|ऑक्टोबर|नोव्हेंबर|डिसेंबर|जनवरी|फरवरी|मई|अगस्त|सितंबर|अक्टूबर|नवंबर|दिसंबर)\s*,?\s*\d{4})',
+        r'((?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|जुलै|जुलाई|जानेवारी|फेब्रुवारी|मार्च|एप्रिल|मे|जून|ऑगस्ट|सप्टेंबर|ऑक्टोबर|नोव्हेंबर|डिसेंबर|जनवरी|फरवरी|मई|अगस्त|सितंबर|अक्टूबर|नवंबर|दिसंबर)\s+\d{1,2}(?:st|nd|rd|th)?\s*,?\s*\d{4})',
+        r'(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{4})'
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            iso = _parse_date_to_iso(m.group(1))
+            if re.match(r'^\d{4}-\d{2}-\d{2}$', iso):
+                return iso
+    return None
 
 class AIService:
     """Delegates domain-specific AI processing to the unified provider client."""
@@ -316,26 +395,102 @@ class AIService:
         Transcribes Marathi/Hindi/English audio and extracts structured fields matching
         the dynamic schema injection.
         Audio is processed in memory and never persisted.
+
+        KEY INVARIANT: Every entry in the returned `fields` dict is keyed by the
+        stable field_id (e.g. "child_name", "age_months"), NEVER by a translated
+        label string.  This is enforced at three layers:
+          1. The AI prompt explicitly lists each field as "USE KEY: <id>" so the
+             model knows the exact key it must emit for every field.
+          2. After inference, a label→id normalisation pass remaps any key that
+             matches a known label back to its stable id (handles model drift).
+          3. The legacy top-level scalar fields (gender, name, age, etc.) are
+             also merged into fields under their own field_ids when a field list
+             is present, so they are never silently dropped on the frontend.
         """
-        # Determine schema source
+        # Build label→id index and schema description for the prompt.
+        # The index maps every variation of a field's label to its stable id so
+        # we can normalise AI output even if the model ignores the KEY instruction.
+        label_to_id: Dict[str, str] = {}  # label_lower → field_id
         schema_desc = ""
+
         if form_fields:
             try:
                 parsed_fields = json.loads(form_fields)
-                schema_desc = f"Target Form Fields (Dynamic): {json.dumps(parsed_fields, ensure_ascii=False)}"
+                # Build human-readable field list that emphasises the KEY the AI must use
+                field_lines = []
+                for f in parsed_fields:
+                    fid = str(f.get("id", "")).strip()
+                    flabel = str(f.get("label", fid)).strip()
+                    ftype = str(f.get("type", "text")).strip()
+                    if not fid:
+                        continue
+                    field_lines.append(
+                        f'  - USE KEY: "{fid}"  |  Field label: "{flabel}"  |  Type: {ftype}'
+                    )
+                    # Index every token of the label (handles bilingual labels like
+                    # "Child Name / बालकाचे नाव") plus the raw label itself
+                    label_to_id[flabel.lower()] = fid
+                    for part in flabel.split("/"):
+                        part_clean = part.strip().lower()
+                        if part_clean:
+                            label_to_id[part_clean] = fid
+                    # Also index the id itself so pass-through values survive the map
+                    label_to_id[fid.lower()] = fid
+
+                # Auto-alias common synonyms for target field IDs so model variations map cleanly
+                known_ids = set(label_to_id.values())
+                name_targets = [x for x in ("member_name", "child_name", "mother_name", "patientName", "elderlyName", "deceasedName", "baby_name") if x in known_ids]
+                if name_targets:
+                    label_to_id.setdefault("name", name_targets[0])
+                    label_to_id.setdefault("full name", name_targets[0])
+                    label_to_id.setdefault("person name", name_targets[0])
+                dob_targets = [x for x in ("date_of_birth", "birth_date", "dob", "dateOfDeath", "lmp_date") if x in known_ids]
+                if dob_targets:
+                    label_to_id.setdefault("date of birth", dob_targets[0])
+                    label_to_id.setdefault("dob", dob_targets[0])
+                    label_to_id.setdefault("birth date", dob_targets[0])
+                    label_to_id.setdefault("date", dob_targets[0])
+                gender_targets = [x for x in ("gender", "baby_gender") if x in known_ids]
+                if gender_targets:
+                    label_to_id.setdefault("sex", gender_targets[0])
+                    label_to_id.setdefault("gender", gender_targets[0])
+                rel_targets = [x for x in ("relationship_to_head", "relationship") if x in known_ids]
+                if rel_targets:
+                    label_to_id.setdefault("relation", rel_targets[0])
+                    label_to_id.setdefault("relationship", rel_targets[0])
+                phone_targets = [x for x in ("mobile_number", "phone_number") if x in known_ids]
+                if phone_targets:
+                    label_to_id.setdefault("mobile", phone_targets[0])
+                    label_to_id.setdefault("phone", phone_targets[0])
+
+                schema_desc = (
+                    "Target Form Fields — you MUST use the exact KEY string shown below "
+                    "(the part after 'USE KEY:') as the key in your `fields` output. "
+                    "Do NOT use the field label or any translation of it as the key.\n"
+                    + "\n".join(field_lines)
+                )
             except Exception:
                 schema_desc = f"Target Form Fields: {form_fields}"
         else:
-            schema_desc = "Extract any recognizable health and identity fields (name, age, gender, symptoms, measurements, etc.)."
+            schema_desc = (
+                "Extract any recognizable health and identity fields "
+                "(name, age, gender, date_of_birth, symptoms, measurements, etc.). "
+                "Use concise snake_case English identifiers as keys "
+                "(e.g. member_name, child_name, date_of_birth, age, gender, weight_kg)."
+            )
 
         prompt = (
             "You are an expert clinical dictation assistant for Indian ASHA healthcare workers.\n"
             "Listen to this spoken audio (spoken in Marathi, Hindi, or Indian English).\n"
-            "CRITICAL REQUIREMENT: ALL returned text (including the transcript and all field values) MUST BE TRANSLATED TO ENGLISH.\n"
-            "1. Transcribe the spoken words and translate the full transcription into English, storing the English version in `transcript`.\n"
-            "2. Extract values for the fields specified below into `fields` (key-value dictionary). Translate all field values to English.\n"
+            "CRITICAL REQUIREMENT: ALL returned text (including the transcript and all field values) "
+            "MUST BE TRANSLATED TO ENGLISH.\n"
+            "1. Transcribe the spoken words and translate the full transcription into English, "
+            "storing the English version in `transcript`.\n"
+            "2. Extract values for the fields specified below into `fields` (key-value pairs). "
+            "IMPORTANT: use the exact KEY string specified for each field — never the label.\n"
             f"{schema_desc}\n"
             "3. Count the number of non-null extracted fields into `fields_detected`.\n"
+            "4. DATES: Any extracted date MUST strictly be formatted in ISO 'YYYY-MM-DD' (e.g. '2006-07-25'). Never output dates as text or unpadded numbers.\n"
             "Do not invent values. If a field was not mentioned in the audio, omit it."
         )
 
@@ -345,10 +500,60 @@ class AIService:
             mime_type=mime_type,
             response_schema=GeminiVoiceExtractionResponse,
         )
-        
-        # Convert Gemini specific schema back to public schema
-        fields_dict = {f.key: f.value for f in gemini_result.fields}
-        
+
+        # ── Normalise keys to stable field_ids ────────────────────────────────
+        # The AI may still return a label-string key despite the prompt instruction
+        # (model drift, multilingual confusion). Remap any key that matches a
+        # known label back to the stable id. Unknown keys pass through as-is.
+        raw_fields: Dict[str, str] = {f.key: f.value for f in gemini_result.fields}
+        fields_dict: Dict[str, str] = {}
+        for raw_key, raw_value in raw_fields.items():
+            normalized_id = label_to_id.get(raw_key.lower(), raw_key)
+            # Normalize date fields to strict ISO YYYY-MM-DD
+            if any(d_kw in normalized_id.lower() for d_kw in ("date", "dob", "edd", "lmp")):
+                val = _parse_date_to_iso(raw_value)
+            else:
+                val = raw_value
+            fields_dict[normalized_id] = val
+
+        # ── Merge legacy top-level scalar fields into fields_dict ─────────────
+        # The Pydantic schema has top-level gender/name/age/relationship fields
+        # from a legacy design. Ensure these also land in fields_dict under the
+        # matching field_id so the frontend merges them into form state cleanly.
+        parsed_gemini_dob = _parse_date_to_iso(gemini_result.date_of_birth) if gemini_result.date_of_birth else None
+
+        legacy_candidates = {
+            "gender": gemini_result.gender,
+            "name": gemini_result.name,
+            # age comes back as int from the legacy field — stringify for consistency
+            "age": str(gemini_result.age) if gemini_result.age is not None else None,
+            "date_of_birth": parsed_gemini_dob,
+            "relationship": gemini_result.relationship,
+            "is_pregnant": str(gemini_result.is_pregnant) if gemini_result.is_pregnant else None,
+        }
+        for legacy_key, legacy_val in legacy_candidates.items():
+            if legacy_val is not None and legacy_val != '':
+                if label_to_id:
+                    stable_id = label_to_id.get(legacy_key, legacy_key)
+                    if stable_id in label_to_id.values() and stable_id not in fields_dict:
+                        fields_dict[stable_id] = legacy_val
+                else:
+                    if legacy_key not in fields_dict:
+                        fields_dict[legacy_key] = legacy_val
+
+        # ── Fallback: regex extraction from transcript if date_of_birth is missing ───
+        dob_keys = [k for k in fields_dict if any(d in k.lower() for d in ("date_of_birth", "dob", "birth_date", "birthdate"))]
+        if not dob_keys and gemini_result.transcript:
+            fallback_dob = _extract_dob_from_text(gemini_result.transcript)
+            if fallback_dob:
+                target_dob_key = "date_of_birth"
+                if label_to_id:
+                    target_dob_key = label_to_id.get("date_of_birth", label_to_id.get("dob", "date_of_birth"))
+                fields_dict[target_dob_key] = fallback_dob
+                parsed_gemini_dob = fallback_dob
+
+        final_dob = parsed_gemini_dob or fields_dict.get("date_of_birth") or fields_dict.get("dob") or fields_dict.get("birth_date")
+
         result = VoiceExtractionResponse(
             transcript=gemini_result.transcript,
             fields=fields_dict,
@@ -356,12 +561,19 @@ class AIService:
             name=gemini_result.name,
             gender=gemini_result.gender,
             age=gemini_result.age,
+            date_of_birth=final_dob,
             is_pregnant=gemini_result.is_pregnant,
             relationship=gemini_result.relationship
         )
-        
+
         if not result.fields_detected and result.fields:
             result.fields_detected = len(result.fields)
+
+        logger.info(
+            "voice_extract_complete: fields_detected=%d keys=%s",
+            result.fields_detected,
+            list(result.fields.keys()),
+        )
         return result
 
     def extract_register_ocr(
