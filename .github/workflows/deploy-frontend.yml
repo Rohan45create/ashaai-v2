@@ -4,9 +4,9 @@
 # Required GitHub Secrets:
 # - AZURE_STATIC_WEB_APPS_API_TOKEN: Deployment token from Azure Static Web App
 #     Overview -> "Manage deployment token", or via CLI.
-# - BACKEND_API_URL: Full base URL of the deployed Spring Boot backend
-#     (e.g. https://ashaai-backend.azurewebsites.net). Injected at build time
-#     as VITE_BACKEND_URL so the SPA can reach /api endpoints and fetch public-config.
+# - VITE_BACKEND_URL (or BACKEND_API_URL): Full base URL of the deployed Spring Boot backend
+#     (e.g. https://ashaai-back-exeja6c4gadqgefj.centralindia-01.azurewebsites.net).
+#     Injected at build time into Vite so the SPA reaches /api endpoints and public-config.
 #
 # Note: Supabase and Google Maps keys are fetched dynamically at runtime by the
 # frontend from Spring Boot's /api/public-config endpoint.
@@ -20,6 +20,7 @@ on:
       - main
     paths:
       - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
   workflow_dispatch:
 
 jobs:
@@ -31,7 +32,32 @@ jobs:
         with:
           submodules: true
 
-      - name: Build And Deploy
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend with Vite
+        working-directory: frontend
+        env:
+          VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL || secrets.BACKEND_API_URL }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_BACKEND_URL || secrets.BACKEND_API_URL }}
+        run: |
+          echo "=== Checking build-time backend URL environment ==="
+          if [ -z "$VITE_BACKEND_URL" ]; then
+            echo "::error::Neither VITE_BACKEND_URL nor BACKEND_API_URL secret is set in GitHub Secrets! Please add VITE_BACKEND_URL under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "VITE_BACKEND_URL is set."
+          npm run build
+
+      - name: Deploy to Azure Static Web Apps
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
         with:
@@ -41,7 +67,4 @@ jobs:
           app_location: "frontend"
           api_location: ""
           output_location: "dist"
-          app_build_command: "npm run build"
-        env:
-          VITE_BACKEND_URL: ${{ secrets.BACKEND_API_URL }}
-
+          skip_app_build: true

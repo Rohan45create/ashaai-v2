@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
-// Hardcoded backend URL, not a secret. Adjust if deploying to a different domain.
-const BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
+// Backend URL configuration - injected at build time via VITE_BACKEND_URL or VITE_API_BASE_URL
+const BASE_URL = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080').trim().replace(/\/+$/, '');
 
 export const useConfigStore = create((set) => ({
   supabaseUrl: null,
