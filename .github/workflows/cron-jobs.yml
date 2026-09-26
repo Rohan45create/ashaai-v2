@@ -1,0 +1,38 @@
+# ==============================================================================
+# AshaAI - Nightly Cron Jobs (Risk Engine & Supabase Keep-Alive)
+#
+# Required GitHub Secrets:
+# - BACKEND_API_URL: Full URL of the deployed Spring Boot backend
+#     (e.g. https://ashaai-backend.azurewebsites.net).
+# - CRON_SERVICE_TOKEN: Valid Supabase JWT / Service token with authorization
+#     to trigger /api/admin/trigger-risk-engine.
+# - SUPABASE_URL: Supabase project URL (e.g. https://<project-ref>.supabase.co).
+# - SUPABASE_ANON_KEY: Supabase anon public API key for pinging /rest/v1/.
+# ==============================================================================
+
+name: Nightly Cron Jobs
+
+on:
+  schedule:
+    # Run every night at midnight UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-nightly-tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Risk Engine
+        run: |
+          curl -X POST "${{ secrets.BACKEND_API_URL }}/api/admin/trigger-risk-engine" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SERVICE_TOKEN }}" \
+            -H "Content-Type: application/json"
+
+      - name: Ping Supabase Keep-Alive
+        # Pings the Supabase REST API to prevent free-tier pause
+        run: |
+          curl -X GET "${{ secrets.SUPABASE_URL }}/rest/v1/" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json"
+

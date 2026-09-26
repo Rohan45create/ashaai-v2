@@ -1,0 +1,82 @@
+# ==============================================================================
+# AshaAI - Deploy AI Service to Azure Container Apps
+#
+# Required GitHub Secrets:
+# - DOCKERHUB_USERNAME: Your Docker Hub account username.
+# - DOCKERHUB_TOKEN: Docker Hub Personal Access Token (Read & Write permissions).
+# - AZURE_CLIENT_ID: Client (Application) ID of the Microsoft Entra App registration configured with OIDC federated credentials.
+# - AZURE_TENANT_ID: Azure Directory (Tenant) ID.
+# - AZURE_SUBSCRIPTION_ID: Azure Subscription ID.
+# ==============================================================================
+
+name: Deploy AI Service to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ai-service/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: ashaai
+  CONTAINER_APP_NAME: ashaai-ai-service
+  IMAGE_NAME: ashaai-ai-service
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ai-service
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Log in to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Azure Container Apps
+        run: |
+          az extension add --name containerapp --upgrade --yes
+
+          # Configure Docker Hub registry credentials on the Container App
+          az containerapp registry set \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --server index.docker.io \
+            --username ${{ secrets.DOCKERHUB_USERNAME }} \
+            --password ${{ secrets.DOCKERHUB_TOKEN }} || true
+
+          # Update Container App image and enforce free consumption tier with min-replicas 0
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --min-replicas 0
+
+

@@ -1,0 +1,47 @@
+# ==============================================================================
+# AshaAI - Deploy Frontend (React / Vite) to Azure Static Web Apps
+#
+# Required GitHub Secrets:
+# - AZURE_STATIC_WEB_APPS_API_TOKEN: Deployment token from Azure Static Web App
+#     Overview -> "Manage deployment token", or via CLI.
+# - BACKEND_API_URL: Full base URL of the deployed Spring Boot backend
+#     (e.g. https://ashaai-backend.azurewebsites.net). Injected at build time
+#     as VITE_BACKEND_URL so the SPA can reach /api endpoints and fetch public-config.
+#
+# Note: Supabase and Google Maps keys are fetched dynamically at runtime by the
+# frontend from Spring Boot's /api/public-config endpoint.
+# ==============================================================================
+
+name: Deploy Frontend to Azure Static Web Apps
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'frontend/**'
+  workflow_dispatch:
+
+jobs:
+  build_and_deploy_job:
+    runs-on: ubuntu-latest
+    name: Build and Deploy Frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Build And Deploy
+        id: builddeploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "frontend"
+          api_location: ""
+          output_location: "dist"
+          app_build_command: "npm run build"
+        env:
+          VITE_BACKEND_URL: ${{ secrets.BACKEND_API_URL }}
+

@@ -1,0 +1,49 @@
+# ==============================================================================
+# AshaAI - Deploy Backend (Spring Boot) to Azure App Service
+#
+# Required GitHub Secrets:
+# - AZURE_BACKEND_PUBLISH_PROFILE: XML publishing profile downloaded directly
+#     from Azure Portal (App Service "ashaai-backend" -> Overview -> "Get publish profile").
+# ==============================================================================
+
+name: Deploy Backend to Azure App Service
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: ashaai-back 
+  JAVA_VERSION: '21'                  
+  DISTRIBUTION: 'temurin'
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.DISTRIBUTION }}
+          cache: 'maven'
+
+      - name: Build with Maven
+        working-directory: ./backend
+        run: mvn clean package -DskipTests
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_BACKEND_PUBLISH_PROFILE }}
+          package: '${{ github.workspace }}/backend/target/*.jar'
+
+
