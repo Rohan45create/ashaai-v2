@@ -12,19 +12,21 @@
 - **Fix: Frontend Deployed VITE_BACKEND_URL Fallback & PWA 192x192 Icon 404 (2026-09-26):**
   - **Issue 1: Deployed frontend called http://localhost:8080/api/public-config**:
     - **Source code location**: In `frontend/src/utils/configStore.js` (line 4) and `frontend/src/utils/api.js` (line 3):
-      `const BASE_URL = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080').trim().replace(/\/+$/, '');`
+      `const BASE_URL = formatBackendUrl(import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL);`
       Vite only embeds environment variables at build time if they carry the `VITE_` prefix.
-    - **Confirmed Root Cause**: In the deployed bundle on Azure Static Web Apps (`authStore-Dl5ZxlHK.js`), `var ya="http://localhost:8080"` was baked into the code because `VITE_BACKEND_URL` was empty during the workflow run. The previous workflow had `VITE_BACKEND_URL: ${{ secrets.BACKEND_API_URL }}` while the GitHub repository secret was named `VITE_BACKEND_URL` (or vice versa), resolving to an empty string. Additionally, Oryx container builds inside `Azure/static-web-apps-deploy@v1` do not reliably inherit custom step environment variables.
+    - **Confirmed Root Cause**: In the deployed bundle on Azure Static Web Apps (`authStore-Dl5ZxlHK.js`), `var ya="http://localhost:8080"` was baked into the code because `VITE_BACKEND_URL` was empty during the workflow run. The previous workflow had `VITE_BACKEND_URL: ${{ secrets.BACKEND_API_URL }}` while the GitHub repository secret was named `VITE_BACKEND_URL`, resolving to an empty string. Additionally, Oryx container builds inside `Azure/static-web-apps-deploy@v1` do not reliably inherit custom step environment variables.
+    - **Missing Protocol Scheme in Secret**: The secret in GitHub was stored as `ashaai-back-exeja6c4gadqgefj.centralindia-01.azurewebsites.net` without the `https://` scheme. Without `https://`, browsers interpret the URL as a relative path rather than an absolute origin.
     - **Real Deployed Backend URL**: Confirmed live backend URL is `https://ashaai-back-exeja6c4gadqgefj.centralindia-01.azurewebsites.net`. Verified live via `curl.exe https://ashaai-back-exeja6c4gadqgefj.centralindia-01.azurewebsites.net/api/public-config` which returned HTTP 200 OK with full public configuration JSON.
     - **Fix Applied**: 
-      1. Updated `frontend/src/utils/configStore.js` and `frontend/src/utils/api.js` to support both `VITE_BACKEND_URL` and `VITE_API_BASE_URL`, trimming whitespace and stripping trailing slashes.
-      2. Refactored `.github/workflows/deploy-frontend.yml` to pre-build the frontend using standard `actions/setup-node@v4` (Node 22) and `npm ci` + `npm run build` directly in the GitHub runner VM with `VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL || secrets.BACKEND_API_URL }}`.
-      3. Added a build assertion that fails loudly (`::error::`) if neither secret is configured, preventing silent fallback to localhost.
-      4. Configured `Azure/static-web-apps-deploy@v1` with `skip_app_build: true` to upload the pre-built `frontend/dist` directory directly, bypassing Oryx build overhead and environment drop issues.
+      1. Updated `frontend/src/utils/configStore.js` and `frontend/src/utils/api.js` with `formatBackendUrl(url)` which validates that the URL starts with `https?://` (auto-prepending `https://` if missing) and trims trailing slashes.
+      2. Refactored `.github/workflows/deploy-frontend.yml` to pre-build the frontend using standard `actions/setup-node@v4` (Node 22) and `npm install` + `npm run build` directly in the GitHub runner VM with `VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL || secrets.BACKEND_API_URL }}`.
+      3. Added workflow bash normalization: prepends `https://` if the secret value is missing the scheme, and fails loudly (`::error::`) if neither secret is set.
+      4. Fixed SWA upload size limit by setting `app_location: "frontend/dist"` and `output_location: ""` for `skip_app_build: true`, preventing `node_modules` from being uploaded.
       5. Added `.github/workflows/deploy-frontend.yml` to workflow `paths` so workflow updates automatically trigger deployment.
   - **Issue 2: PWA Icon 404 (`pwa-192x192.png`)**:
     - **Confirmed Root Cause**: `frontend/vite.config.js` and `manifest.webmanifest` declare `pwa-192x192.png` and `pwa-512x512.png`. Although generated locally, these two files were untracked and never committed to git (`git status` showed `Untracked files: frontend/public/pwa-192x192.png`). Because they were not committed, GitHub Actions deployed without them, returning HTTP 404 on the CDN.
     - **Fix Applied**: Staged and committed `frontend/public/pwa-192x192.png` and `frontend/public/pwa-512x512.png` into git. Verified build outputs them into `dist/pwa-192x192.png` and `dist/manifest.webmanifest`.
+    - **Verification**: Verified live on deployed SWA `https://orange-plant-04dddc700.4.azurestaticapps.net/pwa-192x192.png` and `pwa-512x512.png`: both return HTTP 200 OK.
   - **Issue 3: Frontend Dependencies & Oryx ERESOLVE Peer Conflict**:
     - Pinned `"vite": "^7.3.6"`, `"@vitejs/plugin-react": "^5.2.0"`, and `"vite-plugin-pwa": "^1.3.0"`. `npm install` runs cleanly under default resolution with 0 peer conflicts, and `package-lock.json` was regenerated.
 

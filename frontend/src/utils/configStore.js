@@ -1,7 +1,16 @@
 import { create } from 'zustand';
 
 // Backend URL configuration - injected at build time via VITE_BACKEND_URL or VITE_API_BASE_URL
-const BASE_URL = (import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080').trim().replace(/\/+$/, '');
+const formatBackendUrl = (url) => {
+  if (!url) return 'http://localhost:8080';
+  let cleanUrl = url.trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(cleanUrl) && !cleanUrl.startsWith('localhost') && !cleanUrl.startsWith('127.0.0.1')) {
+    return `https://${cleanUrl}`;
+  }
+  return cleanUrl;
+};
+
+const BASE_URL = formatBackendUrl(import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL);
 
 export const useConfigStore = create((set) => ({
   supabaseUrl: null,

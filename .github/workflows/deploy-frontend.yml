@@ -54,7 +54,12 @@ jobs:
             echo "::error::Neither VITE_BACKEND_URL nor BACKEND_API_URL secret is set in GitHub Secrets! Please add VITE_BACKEND_URL under Settings -> Secrets and variables -> Actions."
             exit 1
           fi
-          echo "VITE_BACKEND_URL is set."
+          if [[ "$VITE_BACKEND_URL" != http* ]]; then
+            echo "VITE_BACKEND_URL is missing http(s) scheme, prepending https://"
+            export VITE_BACKEND_URL="https://$VITE_BACKEND_URL"
+            export VITE_API_BASE_URL="$VITE_BACKEND_URL"
+          fi
+          echo "VITE_BACKEND_URL is set: $VITE_BACKEND_URL"
           npm run build
 
       - name: Deploy to Azure Static Web Apps
