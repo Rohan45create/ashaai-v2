@@ -92,7 +92,7 @@ class SurveyProcessorServiceTest {
         child.setId(childId);
         child.setHouseholdMember(member);
         child.setAsha(asha);
-        when(childRepository.findByHouseholdMember_Id(memberId)).thenReturn(Optional.of(child));
+        when(childRepository.findFirstByHouseholdMember_Id(memberId)).thenReturn(Optional.of(child));
         when(childRepository.save(any(Child.class))).thenAnswer(i -> i.getArgument(0));
 
         when(surveySubmissionRepository.save(any(SurveySubmission.class))).thenAnswer(i -> {
@@ -194,7 +194,7 @@ class SurveyProcessorServiceTest {
         child.setId(childId);
         child.setHouseholdMember(member);
         child.setAsha(asha);
-        when(childRepository.findByHouseholdMember_Id(memberId)).thenReturn(Optional.of(child));
+        when(childRepository.findFirstByHouseholdMember_Id(memberId)).thenReturn(Optional.of(child));
         when(childRepository.save(any(Child.class))).thenAnswer(i -> i.getArgument(0));
 
         when(surveySubmissionRepository.save(any(SurveySubmission.class))).thenAnswer(i -> {
