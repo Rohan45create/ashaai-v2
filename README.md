@@ -414,3 +414,90 @@ Deploy order: **ai-service → backend → frontend**, then point the NGO Apps S
 | Maps | Google Maps JavaScript API |
 | Hosting & CI/CD | Azure Static Web Apps, App Service, Container Apps; GitHub Actions |
 
+# AshaAI Project Implementation Overview
+
+1. **Technology Stack**: React 19 PWA (Vite, Tailwind CSS, Zustand) on the frontend, a Spring Boot 3 / Java 21 backend as the single write path, a Python FastAPI AI microservice, and Supabase PostgreSQL as the row-level-secured database.
+
+2. **AI Layer**: A provider chain per task — speech-to-text, text reasoning, and translation each try near.ai (only if a key is present), then free open-source India-focused models on Hugging Face, then Gemini/Groq as the final fallback. Vision (register OCR, malnutrition report) uses Gemini. Critical outputs use a two-provider consensus check, and a disagreement is routed to mandatory supervisor review.
+
+3. **Voice & Language**: Marathi, Hindi, and English across the UI, voice dictation, survey translation, and the conversational agent (browser VAD + on-device text-to-speech).
+
+4. **Offline-First Design**: A Service Worker plus an IndexedDB write queue keep every module working with zero connectivity; queued writes replay on reconnect with a visible sync status.
+
+5. **Risk Engine**: A deterministic weighted formula (not an AI call) scores every child 0–100, forces SAM cases to CRITICAL, and adds a separate genetic-risk uplift when a sibling has a SAM/MAM record.
+
+6. **Security & Compliance**: JWTs validated against Supabase's asymmetric JWKS, RLS on every table, AES-256-GCM for Aadhaar/ABHA, on-device-only Aadhaar OCR, rate limiting with tighter limits on AI endpoints, and structured logs with no personal health data. Designed with the DPDP Act in mind.
+
+7. **Supervisor Web Portal**: A dedicated `/admin` area with dashboard, worker management, NRC referrals, NGO management, pending review, a no-code Survey Builder, a coverage map, and reports.
+
+8. **Real User Research**: Architecture and feature priorities were directly informed by interviews with practicing ASHA workers and photographs of their physical diary registers.
+
+9. **NGO & Orphanage Integration**: Google Forms + Apps Script webhooks let NGOs self-register and request appointment changes; the backend queues them for admin approval, books visits, and sends Gmail SMTP notifications with reschedule links.
+
+10. **Free-tier by design**: Azure Static Web Apps, App Service F1, Container Apps scale-to-zero, Supabase free tier, and open-source models — the platform is built to run at ₹0 for demos and pilots.
+
+## 📖 Resources & References
+
+### ASHA Worker Domain Research
+These shaped AshaAI's data model, module list, and feature priorities.
+
+- [About ASHA — National Health Mission (Government of India)](https://nhm.gov.in/index1.php?lang=1&level=1&sublinkid=150&lid=226) — official role definition, selection criteria, and responsibilities of ASHA workers
+- [Guidelines on Accredited Social Health Activists (ASHA) — NHM PDF](https://nhm.gov.in/images/pdf/communitisation/task-group-reports/guidelines-on-asha.pdf) — the foundational government guideline document covering ASHA tasks, training, and incentive structure
+- [ASHA Scheme — NHM Maharashtra](https://nhm.maharashtra.gov.in/en/scheme/accredited-social-health-activist-asha/) — state-level implementation details for Maharashtra, including programmes ASHAs support (Immunization, NCD, HBNC/HBYC)
+- [ANMOL App — RCH Portal, NHM Maharashtra](https://nhm.maharashtra.gov.in/en/scheme/reproductive-child-health-rch-portal/) — the existing government digital health app for ANM/ASHA workers; AshaAI is designed to complement and improve on this offline-first model
+- [Reimagining Maternal Health Record Keeping for ASHA Workers — UX case study](https://medium.com/@surbhisardana/reimagining-maternal-health-record-keeping-for-asha-workers-1113551866b0) — direct documentation of the "10+ paper registers + ANMOL" pain points that motivated AshaAI's offline-first, voice-first design
+- [Knowledge of ASHAs in India — Systematic Review (PMC)](https://pmc.ncbi.nlm.nih.gov/articles/PMC11724453/) — peer-reviewed synthesis of ASHA training gaps across India, 2005–2022
+
+### Malnutrition & Nutrition Standards
+- [WHO Child Growth Standards & Identification of SAM (WHO/NCBI Bookshelf)](https://www.ncbi.nlm.nih.gov/books/NBK200776/) — defines the MUAC < 115 mm SAM cutoff and weight-for-height Z-score criteria (AshaAI uses 115 mm SAM / 125 mm MAM)
+- [Community-Based Management of Acute Malnutrition — FHI360 Module 2](https://www.fhi360.org/wp-content/uploads/2012/12/CMAM_Training_Mod2_ENGLISH_Nov2008.pdf) — SAM/MAM clinical signs (bilateral pitting oedema, MUAC bands)
+- [Mission Poshan 2.0 / Saksham Anganwadi — Ministry of Women & Child Development](https://wcd.gov.in/offerings/nutrition-mission-saksham-anganwadi-and-poshan-2-0-mission-saksham-anganwadi-poshan-2-0) — official NRC referral and nutrition tracking framework AshaAI's referral pipeline aligns with
+
+### Platform & AI Documentation
+- [Spring Boot Reference Documentation](https://docs.spring.io/spring-boot/index.html) — backend framework
+- [Supabase Documentation](https://supabase.com/docs) — Postgres, Auth, Row-Level Security, Storage
+- [Flyway Documentation](https://documentation.red-gate.com/flyway) — database migrations
+- [FastAPI Documentation](https://fastapi.tiangolo.com/) — AI microservice
+- [ONNX Runtime](https://onnxruntime.ai/docs/) — CPU inference for the malnutrition classifier
+- [MediaPipe Tasks](https://ai.google.dev/edge/mediapipe/solutions/guide) — pose landmarks for arm measurement
+- [Hugging Face — AI4Bharat](https://huggingface.co/ai4bharat) — Indic-Whisper and IndicTrans2 open models
+- [Hugging Face — Sarvam AI](https://huggingface.co/sarvamai) — Sarvam open-weight models for Indian languages
+- [Gemini API Documentation](https://ai.google.dev/gemini-api/docs) — vision and final-fallback provider
+- [Google Maps Platform — Maps JavaScript API](https://developers.google.com/maps/documentation/javascript) — coverage map
+- [vite-plugin-pwa](https://vite-pwa-org.netlify.app/) — Service Worker / PWA manifest
+
+### Hosting & CI/CD
+- [Azure Static Web Apps](https://learn.microsoft.com/azure/static-web-apps/) — frontend hosting
+- [Azure App Service](https://learn.microsoft.com/azure/app-service/) — backend hosting
+- [Azure Container Apps](https://learn.microsoft.com/azure/container-apps/) — AI microservice hosting
+- [GitHub Actions](https://docs.github.com/actions) — CI/CD workflows
+
+### Data Privacy & Compliance (India)
+- [Digital Personal Data Protection Act, 2023 — Official Text (MeitY)](https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf) — governs AshaAI's consent, minimisation, and retention design
+- [DPDP Rules 2025 — PIB Press Release](https://www.pib.gov.in/PressNoteDetails.aspx?NoteId=156054&ModuleId=3&reg=3&lang=2) — the core principles (consent, purpose limitation, data minimisation)
+
+### NGO Integration — Forms & Automation
+- [Apps Script — Installable Triggers (onFormSubmit)](https://developers.google.com/apps-script/guides/triggers/installable) — the trigger pattern used for the NGO registration webhook
+- [Apps Script — UrlFetchApp (HTTP requests)](https://developers.google.com/apps-script/reference/url-fetch/url-fetch-app) — used to POST form submissions to the backend's `/api/ngo/form-submission` endpoint
+
+# Hi, We are Team AshaAI
+
+## 🤝 Contributors
+
+We are a team of six Computer Engineering students from [Maharashtra Institute of Technology](https://www.linkedin.com/school/mit-csn/posts/?feedView=all), Chhatrapati Sambhajinagar, Maharashtra, building AshaAI for the **Google Solution Challenge 2026** (**Build with AI** track by Hack2Skill and Google Developer Groups) and **Smart India Hackathon 2026**.
+
+| Avatar | Name | Role | LinkedIn |
+|:---:|---|---|---|
+| <img src="https://api.dicebear.com/10.x/glyphs/svg?shapeProbability=46&glyphColor=76a7ff,525fa3,8c8c8c,ffaa64,ff4d6f&seed=Rohan%20Gangawane" alt="avatar" /> | Rohan Gangawane | Team Lead / Full-Stack & AI | [rohan-gangawane](https://www.linkedin.com/in/rohan-gangawane/) |
+| <img src="https://api.dicebear.com/10.x/glyphs/svg?shapeProbability=46&glyphColor=76a7ff,525fa3,8c8c8c,ffaa64,ff4d6f&seed=Sahil%20" alt="avatar" /> | Sahil Dawande | Frontend Dev & Researcher | [sahil-dawande](https://www.linkedin.com/in/sahil-dawande-645a70361/) |
+| <img src="https://api.dicebear.com/10.x/glyphs/svg?seed=Sakshi" alt="avatar" /> | Sakshi Bhutekar | Backend Developer | [sakshi-bhutekar](https://www.linkedin.com/in/sakshi-bhutekar-3009572ba/) |
+| <img src="https://api.dicebear.com/10.x/glyphs/svg?seed=Pratik" alt="avatar" /> | Pratik Bhosale | UI/UX Designer / Database | [pratik-bhosale](https://www.linkedin.com/in/pratik-bhosale-756489318/) |
+| <img src="https://api.dicebear.com/10.x/glyphs/svg?seed=Sanjana%20Pingle" alt="avatar" /> | Sanjana Pingle | Researcher | [sanjana-pingle](https://www.linkedin.com/in/sanjana-pingle?utm_source=share_via&utm_content=profile&utm_medium=member_ios) |
+| <img src="https://api.dicebear.com/10.x/glyphs/svg?seed=Maithili%20" alt="avatar" /> | Maithili Kausadikar | UI/UX / Documentation | [maithili-kausadikar](https://www.linkedin.com/in/maithili-kausadikar-090297303?utm_source=share_via&utm_content=profile&utm_medium=member_android) |
+
+
+## Keep Building 🚀
+
+Join us in the mission to digitize India's rural healthcare frontline, eliminate paperwork for ASHA workers, and bring early-warning risk scoring — and coordinated child welfare support — to the communities that need them most!
+
+Made with ❤️ by Team AshaAI — Empowering ASHA Workers, One Village at a Time.
