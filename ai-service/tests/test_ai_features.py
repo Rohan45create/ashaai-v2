@@ -26,20 +26,23 @@ from services.gemini_service import (
 
 class TestAIFeatures(unittest.TestCase):
 
-    @patch("services.gemini_service.call_multimodal")
-    def test_muac_grading_sam_threshold(self, mock_multimodal):
+    @patch("services.gemini_service.call_report_generation_consensus")
+    def test_muac_grading_sam_threshold(self, mock_consensus):
         """MUAC < 115mm must strictly yield SAM, grade RED, and needs_nrc_referral=True."""
-        mock_multimodal.return_value = MuacGradingResponse(
-            grade="RED",
-            malnutrition_grade="SAM",
-            severity_label="Severe (SAM)",
-            muac_mm=112.0,
-            confidence=92.0,
-            visible_signs=["Bilateral pitting edema", "Severe wasting"],
-            recommendation="Immediate referral to NRC",
-            needs_nrc_referral=True,
-            explanation="MUAC is 112mm, well below 115mm threshold",
-        )
+        mock_consensus.return_value = {
+            "result": MuacGradingResponse(
+                grade="RED",
+                malnutrition_grade="SAM",
+                severity_label="Severe (SAM)",
+                muac_mm=112.0,
+                confidence=92.0,
+                visible_signs=["Bilateral pitting edema", "Severe wasting"],
+                recommendation="Immediate referral to NRC",
+                needs_nrc_referral=True,
+                explanation="MUAC is 112mm, well below 115mm threshold",
+            ),
+            "source": "gemini",
+        }
 
         res = gemini_service.grade_muac_photo(b"dummy_image_data")
         self.assertEqual(res.grade, "RED")
@@ -47,20 +50,23 @@ class TestAIFeatures(unittest.TestCase):
         self.assertTrue(res.needs_nrc_referral)
         self.assertLess(res.muac_mm, 115.0)
 
-    @patch("services.gemini_service.call_multimodal")
-    def test_muac_grading_mam_threshold(self, mock_multimodal):
+    @patch("services.gemini_service.call_report_generation_consensus")
+    def test_muac_grading_mam_threshold(self, mock_consensus):
         """MUAC between 115mm and 124mm must yield MAM, grade YELLOW, needs_nrc_referral=False."""
-        mock_multimodal.return_value = MuacGradingResponse(
-            grade="YELLOW",
-            malnutrition_grade="MAM",
-            severity_label="Moderate (MAM)",
-            muac_mm=121.0,
-            confidence=88.0,
-            visible_signs=["Mild muscle loss"],
-            recommendation="THR supplementation",
-            needs_nrc_referral=False,
-            explanation="MUAC is 121mm, in MAM range",
-        )
+        mock_consensus.return_value = {
+            "result": MuacGradingResponse(
+                grade="YELLOW",
+                malnutrition_grade="MAM",
+                severity_label="Moderate (MAM)",
+                muac_mm=121.0,
+                confidence=88.0,
+                visible_signs=["Mild muscle loss"],
+                recommendation="THR supplementation",
+                needs_nrc_referral=False,
+                explanation="MUAC is 121mm, in MAM range",
+            ),
+            "source": "groq",
+        }
 
         res = gemini_service.grade_muac_photo(b"dummy_image_data")
         self.assertEqual(res.grade, "YELLOW")
@@ -68,20 +74,23 @@ class TestAIFeatures(unittest.TestCase):
         self.assertFalse(res.needs_nrc_referral)
         self.assertTrue(115.0 <= res.muac_mm < 125.0)
 
-    @patch("services.gemini_service.call_multimodal")
-    def test_muac_grading_normal_threshold(self, mock_multimodal):
+    @patch("services.gemini_service.call_report_generation_consensus")
+    def test_muac_grading_normal_threshold(self, mock_consensus):
         """MUAC >= 125mm must yield Normal, grade NORMAL, needs_nrc_referral=False."""
-        mock_multimodal.return_value = MuacGradingResponse(
-            grade="NORMAL",
-            malnutrition_grade="Normal",
-            severity_label="Normal",
-            muac_mm=135.0,
-            confidence=95.0,
-            visible_signs=[],
-            recommendation="Normal growth",
-            needs_nrc_referral=False,
-            explanation="MUAC is 135mm, in green zone",
-        )
+        mock_consensus.return_value = {
+            "result": MuacGradingResponse(
+                grade="NORMAL",
+                malnutrition_grade="Normal",
+                severity_label="Normal",
+                muac_mm=135.0,
+                confidence=95.0,
+                visible_signs=[],
+                recommendation="Normal growth",
+                needs_nrc_referral=False,
+                explanation="MUAC is 135mm, in green zone",
+            ),
+            "source": "gemini",
+        }
 
         res = gemini_service.grade_muac_photo(b"dummy_image_data")
         self.assertEqual(res.grade, "NORMAL")

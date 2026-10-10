@@ -5,8 +5,11 @@ import glob
 
 # Ensure ai-service is in Python path for local testing
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from services.provider_client import _call_hf_indic_whisper, _call_gemini_multimodal
+
 
 def evaluate_stt_accuracy(samples_dir: str):
     """
