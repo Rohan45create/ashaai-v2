@@ -89,7 +89,12 @@ export const useAuthStore = create((set, get) => ({
   sendOtp: async (phone) => {
     try {
       const supabase = get().getSupabase();
-      const { error } = await supabase.auth.signInWithOtp({ phone });
+      const { error } = await supabase.auth.signInWithOtp({
+        phone,
+        options: {
+          shouldCreateUser: false,
+        },
+      });
       if (error) throw error;
     } catch (err) {
       showToast(err.message || "Failed to send OTP", "error");

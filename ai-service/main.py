@@ -12,12 +12,20 @@ import pathlib as _pl
 # key as '\ufeffGEMINI_API_KEY' instead of 'GEMINI_API_KEY', so os.getenv()
 # returns None even when the file looks correct.
 _env_path = _pl.Path(__file__).parent / ".env"
+_env_local_path = _pl.Path(__file__).parent / ".env.local"
 if _env_path.exists():
     _raw = _env_path.read_bytes()
     if _raw.startswith(b"\xef\xbb\xbf"):
         _env_path.write_bytes(_raw[3:])
+if _env_local_path.exists():
+    _raw_local = _env_local_path.read_bytes()
+    if _raw_local.startswith(b"\xef\xbb\xbf"):
+        _env_local_path.write_bytes(_raw_local[3:])
 
-load_dotenv(override=True)
+load_dotenv(_env_path)
+if _env_local_path.exists():
+    load_dotenv(_env_local_path, override=True)
+
 
 from fastapi import FastAPI
 from routers import voice, vision, register, ambient, text_features, agent

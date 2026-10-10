@@ -5,6 +5,8 @@ import LanguageToggle from '../../components/LanguageToggle';
 import toast from 'react-hot-toast';
 import { useConfigStore } from '../../utils/configStore';
 import { useAuthStore } from '../../stores/authStore';
+import { apiFetch } from '../../utils/api';
+import { normalizeIndianPhone } from '../../utils/phoneUtils';
 
 export default function ASHALogin() {
   const ngoFormNewUrl = useConfigStore(state => state.ngoFormNewUrl) || '#';
@@ -33,18 +35,44 @@ export default function ASHALogin() {
 
   const handleSendOtp = async (e) => {
     e.preventDefault();
-    if (!phoneNumber || phoneNumber.length < 10) {
-      setError('Please enter a valid 10-digit number');
+    const normalizedPhone = normalizeIndianPhone(phoneNumber);
+    if (!normalizedPhone) {
+      setError(t('auth_invalid_phone') || 'Please enter a valid 10-digit mobile number');
       return;
     }
     setError('');
     setIsLoading(true);
     try {
-      const formattedPhone = phoneNumber.startsWith('+91') ? phoneNumber : `+91${phoneNumber}`;
-      await sendOtp(formattedPhone);
+      // Step 1: Pre-check worker phone against Spring Boot endpoint BEFORE any OTP is issued
+      const checkRes = await apiFetch('/api/auth/check-worker-phone', {
+        method: 'POST',
+        body: JSON.stringify({ phone: normalizedPhone }),
+      });
+
+      if (!checkRes || !checkRes.registered) {
+        setError(t('auth_worker_not_found') || 'No ASHA worker is registered with this number. Contact your supervisor.');
+        return;
+      }
+
+      // Step 2: Only call Supabase OTP if worker is confirmed registered, active, and linked
+      await sendOtp(normalizedPhone);
       setStep(2);
     } catch (err) {
-      setError(err.message || 'Failed to send OTP');
+      console.error('ASHA login pre-check or OTP send failed:', err);
+      const code = err.error || err.code;
+      let msg = err.message;
+      if (code === 'WORKER_NOT_FOUND' || err.status === 404) {
+        msg = t('auth_worker_not_found') || 'No ASHA worker is registered with this number. Contact your supervisor.';
+      } else if (code === 'WORKER_INACTIVE' || err.status === 403) {
+        msg = t('auth_worker_inactive') || 'This ASHA worker account is deactivated. Contact your supervisor.';
+      } else if (code === 'WORKER_NOT_LINKED' || err.status === 409) {
+        msg = t('auth_worker_not_linked') || 'Your account is not set up for login yet. Contact your supervisor.';
+      } else if (code === 'RATE_LIMIT_EXCEEDED' || err.status === 429) {
+        msg = t('auth_rate_limit_exceeded') || 'Too many attempts. Please wait a moment.';
+      } else if (code === 'INVALID_PHONE' || err.status === 400) {
+        msg = t('auth_invalid_phone') || 'Please enter a valid 10-digit mobile number.';
+      }
+      setError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -56,8 +84,8 @@ export default function ASHALogin() {
     setError('');
     setIsLoading(true);
     try {
-      const formattedPhone = phoneNumber.startsWith('+91') ? phoneNumber : `+91${phoneNumber}`;
-      await verifyOtp(formattedPhone, otp, navigate);
+      const normalizedPhone = normalizeIndianPhone(phoneNumber);
+      await verifyOtp(normalizedPhone || phoneNumber, otp, navigate);
     } catch (err) {
       setError(err.message || 'Invalid OTP');
     } finally {

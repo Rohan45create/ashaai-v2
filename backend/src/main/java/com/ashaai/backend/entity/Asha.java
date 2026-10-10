@@ -51,4 +51,15 @@ public class Asha extends BaseEntity {
 
     public String getFcmToken() { return fcmToken; }
     public void setFcmToken(String fcmToken) { this.fcmToken = fcmToken; }
+
+    @jakarta.persistence.Transient
+    private Boolean active = true;
+
+    public boolean isActive() {
+        return active != null ? active : true;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
+    }
 }

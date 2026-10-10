@@ -22,15 +22,24 @@ from __future__ import annotations
 import base64
 import json
 import os
+import pathlib as _pl
 import concurrent.futures
 from typing import Any, Optional, Type, Union
 
+from dotenv import load_dotenv
 import httpx
 import structlog
 from google import genai
 from google.genai import types
 from groq import Groq
 from pydantic import BaseModel
+
+# Ensure environment is loaded from .env and .env.local
+_ai_dir = _pl.Path(__file__).resolve().parent.parent
+if (_ai_dir / ".env").exists():
+    load_dotenv(_ai_dir / ".env")
+if (_ai_dir / ".env.local").exists():
+    load_dotenv(_ai_dir / ".env.local", override=True)
 
 logger = structlog.get_logger(__name__)
 
@@ -45,6 +54,14 @@ class NearAIUnavailableError(AIProviderError):
     pass
 
 
+class HFInferenceError(AIProviderError):
+    """Raised when a Hugging Face inference request fails."""
+    def __init__(self, message: str, status_code: Optional[int] = None, short_reason: str = "unknown"):
+        super().__init__(message)
+        self.status_code = status_code
+        self.short_reason = short_reason
+
+
 # Configuration defaults
 NEAR_AI_DEFAULT_BASE_URL = "https://cloud-api.near.ai/v1"
 NEAR_AI_DEFAULT_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
@@ -53,9 +70,83 @@ GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 GEMINI_DEFAULT_MODEL = "gemini-3.6-flash"          # text / call_text path (override: GEMINI_MODEL)
 GEMINI_MULTIMODAL_DEFAULT_MODEL = "gemini-3.5-flash-lite"  # image+audio / call_multimodal path (override: GEMINI_MULTIMODAL_MODEL)
 
+HF_INFERENCE_ROUTER_DEFAULT_URL = "https://router.huggingface.co/hf-inference/models"
 HF_SARVAM_DEFAULT_MODEL = "sarvamai/sarvam-30b"
-HF_INDICTRANS_DEFAULT_MODEL = "ai4bharat/indictrans2-en-indic"
-HF_INDICWHISPER_DEFAULT_MODEL = "ai4bharat/indicwhisper"
+HF_INDICTRANS_DEFAULT_MODEL = "ai4bharat/indictrans2-en-indic-dist-200M"
+HF_INDICWHISPER_DEFAULT_MODEL = "openai/whisper-large-v3"
+
+
+def _get_hf_token() -> str:
+    """Read Hugging Face authentication token from environment."""
+    return (os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY") or "").strip()
+
+
+def _resolve_hf_endpoint(model_env: str, endpoint_env: str, default_model: str) -> tuple[str, str]:
+    """Resolve endpoint URL and model identifier for a Hugging Face model call."""
+    model_id = os.getenv(model_env, default_model).strip()
+    custom_endpoint = os.getenv(endpoint_env, "").strip()
+    if custom_endpoint:
+        return custom_endpoint, model_id
+    base_router = os.getenv("HF_INFERENCE_ROUTER_URL", HF_INFERENCE_ROUTER_DEFAULT_URL).rstrip("/")
+    return f"{base_router}/{model_id}", model_id
+
+
+class ProviderChainTracker:
+    """Tracks and logs multi-provider fallback chains visibly per request."""
+
+    def __init__(self, task_name: str):
+        self.task_name = task_name
+        self.links: list[str] = []
+        self.details: list[dict[str, Any]] = []
+
+    def record_skip(self, provider: str, reason: str = "no_key") -> None:
+        self.links.append(f"{provider}=skipped({reason})")
+        self.details.append({"provider": provider, "status": "skipped", "reason": reason})
+
+    def record_failure(
+        self,
+        provider: str,
+        model: Optional[str] = None,
+        status_code: Optional[int] = None,
+        exc_type: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        code_str = f"{status_code} " if status_code else ""
+        short_reason = (reason or "failed").replace(" ", "_")[:30]
+        self.links.append(f"{provider}=FAILED({code_str}{short_reason})")
+        self.details.append({
+            "provider": provider,
+            "model": model,
+            "status": "failed",
+            "http_status": status_code,
+            "exception_type": exc_type,
+            "reason": short_reason,
+        })
+        logger.warning(
+            "ai_provider_link_failed",
+            task=self.task_name,
+            provider=provider,
+            model=model,
+            http_status=status_code,
+            exception_type=exc_type,
+            reason=short_reason,
+        )
+
+    def record_success(self, provider: str, model: Optional[str] = None) -> None:
+        self.links.append(f"{provider}=OK")
+        self.details.append({"provider": provider, "model": model, "status": "ok"})
+        logger.info(
+            "ai_provider_link_succeeded",
+            task=self.task_name,
+            provider=provider,
+            model=model,
+        )
+
+    def log_chain(self) -> str:
+        chain_line = f"{self.task_name}: " + " -> ".join(self.links)
+        logger.info("ai_provider_chain", path=chain_line, attempts=self.details)
+        return chain_line
+
 
 
 def _extract_bytes(audio_or_image: Union[bytes, str]) -> bytes:
@@ -203,43 +294,118 @@ def _call_near_ai_multimodal(
     return raw_text
 
 
+def _post_hf_with_retry(
+    endpoint_url: str,
+    headers: dict[str, str],
+    json_payload: Optional[dict[str, Any]] = None,
+    content_bytes: Optional[bytes] = None,
+    timeout: float = 30.0,
+) -> httpx.Response:
+    """Make HTTP POST to Hugging Face with bounded retry on 503 (model loading/cold start)."""
+    import time as _time
+
+    last_resp: Optional[httpx.Response] = None
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=httpx.Timeout(timeout, connect=5.0)) as client:
+                if content_bytes is not None:
+                    resp = client.post(endpoint_url, headers=headers, content=content_bytes)
+                else:
+                    resp = client.post(endpoint_url, headers=headers, json=json_payload)
+
+            if resp.status_code == 503 and attempt == 0:
+                logger.warning("hf_model_loading_cold_start_retrying", endpoint=endpoint_url, attempt=attempt + 1)
+                _time.sleep(3.0)
+                continue
+
+            last_resp = resp
+            if resp.is_error:
+                err_text = resp.text
+                short_reason = "http_error"
+                try:
+                    err_json = resp.json()
+                    if isinstance(err_json, dict):
+                        raw_err = err_json.get("error") or err_json.get("message")
+                        if isinstance(raw_err, str):
+                            raw_lower = raw_err.lower()
+                            if "not supported by provider" in raw_lower:
+                                short_reason = "model_not_supported_on_serverless"
+                            elif "not found" in raw_lower:
+                                short_reason = "repo_not_found"
+                            elif "rate limit" in raw_lower:
+                                short_reason = "rate_limit_exceeded"
+                            else:
+                                short_reason = raw_err[:30].replace(" ", "_")
+                except Exception:
+                    pass
+
+                raise HFInferenceError(
+                    f"HF call returned {resp.status_code}: {err_text[:200]}",
+                    status_code=resp.status_code,
+                    short_reason=short_reason,
+                )
+
+            return resp
+
+        except HFInferenceError:
+            raise
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            raise HFInferenceError(f"Connection failure: {exc}", status_code=None, short_reason="connection_failed") from exc
+        except Exception as exc:
+            raise HFInferenceError(f"Request failed: {exc}", status_code=None, short_reason=type(exc).__name__) from exc
+
+    if last_resp is not None:
+        raise HFInferenceError(f"HF call failed: status={last_resp.status_code}", status_code=last_resp.status_code, short_reason="cold_start_timeout")
+    raise HFInferenceError("HF call failed: retry exhausted", status_code=None, short_reason="retry_exhausted")
+
+
 def _call_hf_sarvam_text(
     prompt: str,
     system_prompt: Optional[str] = None,
     response_schema: Optional[Type[BaseModel]] = None,
     **kwargs: Any,
 ) -> Any:
-    """Execute text inference using Sarvam-30B on Hugging Face Inference API."""
-    api_key = os.getenv("HUGGINGFACE_API_KEY")
-    if not api_key:
-        raise AIProviderError("HUGGINGFACE_API_KEY is not set.")
-    
-    model = os.getenv("HF_SARVAM_MODEL", HF_SARVAM_DEFAULT_MODEL)
-    
-    # Simple formatting for models via Inference API text generation
+    """Execute text inference using Sarvam-30B on Hugging Face Inference API/Endpoints."""
+    token = _get_hf_token()
+    if not token:
+        raise HFInferenceError("HF_TOKEN or HUGGINGFACE_API_KEY is not set.", status_code=401, short_reason="no_token")
+
+    endpoint_url, model = _resolve_hf_endpoint(
+        "HF_SARVAM_MODEL",
+        "HF_SARVAM_ENDPOINT_URL",
+        HF_SARVAM_DEFAULT_MODEL,
+    )
+
     full_prompt = prompt
     if system_prompt:
         full_prompt = f"System: {system_prompt}\n\nUser: {prompt}"
-        
+
     payload = {
-        "inputs": full_prompt, 
-        "parameters": {"temperature": kwargs.get("temperature", 0.1), "return_full_text": False, "max_new_tokens": 1024}
+        "inputs": full_prompt,
+        "parameters": {
+            "temperature": kwargs.get("temperature", 0.1),
+            "return_full_text": False,
+            "max_new_tokens": kwargs.get("max_new_tokens", 1024),
+        },
     }
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                f"https://api-inference.huggingface.co/models/{model}",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload
-            )
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, list) and len(data) > 0 and "generated_text" in data[0]:
-            raw_text = data[0]["generated_text"]
-        else:
-            raw_text = str(data)
-    except Exception as e:
-        raise AIProviderError(f"HF Sarvam-30B request failed: {e}") from e
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    resp = _post_hf_with_retry(
+        endpoint_url=endpoint_url,
+        headers=headers,
+        json_payload=payload,
+        timeout=float(kwargs.get("timeout", 30.0)),
+    )
+    data = resp.json()
+    if isinstance(data, list) and len(data) > 0 and "generated_text" in data[0]:
+        raw_text = data[0]["generated_text"]
+    elif isinstance(data, dict) and "generated_text" in data:
+        raw_text = data["generated_text"]
+    else:
+        raw_text = str(data)
 
     if response_schema:
         return response_schema.model_validate_json(_clean_json_text(raw_text))
@@ -251,30 +417,38 @@ def _call_hf_indictrans2(
     response_schema: Optional[Type[BaseModel]] = None,
     **kwargs: Any,
 ) -> Any:
-    """Execute translation inference using IndicTrans2 on Hugging Face Inference API."""
-    api_key = os.getenv("HUGGINGFACE_API_KEY")
-    if not api_key:
-        raise AIProviderError("HUGGINGFACE_API_KEY is not set.")
-    
-    model = os.getenv("HF_INDICTRANS_MODEL", HF_INDICTRANS_DEFAULT_MODEL)
+    """Execute translation inference using IndicTrans2 on Hugging Face Inference API/Endpoints."""
+    token = _get_hf_token()
+    if not token:
+        raise HFInferenceError("HF_TOKEN or HUGGINGFACE_API_KEY is not set.", status_code=401, short_reason="no_token")
+
+    endpoint_url, model = _resolve_hf_endpoint(
+        "HF_INDICTRANS_MODEL",
+        "HF_INDICTRANS_ENDPOINT_URL",
+        HF_INDICTRANS_DEFAULT_MODEL,
+    )
+
     payload = {"inputs": prompt}
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                f"https://api-inference.huggingface.co/models/{model}",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload
-            )
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, list) and len(data) > 0 and "translation_text" in data[0]:
-            raw_text = data[0]["translation_text"]
-        elif isinstance(data, list) and len(data) > 0 and "generated_text" in data[0]:
-            raw_text = data[0]["generated_text"]
-        else:
-            raw_text = str(data)
-    except Exception as e:
-        raise AIProviderError(f"HF IndicTrans2 request failed: {e}") from e
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    resp = _post_hf_with_retry(
+        endpoint_url=endpoint_url,
+        headers=headers,
+        json_payload=payload,
+        timeout=float(kwargs.get("timeout", 30.0)),
+    )
+    data = resp.json()
+    if isinstance(data, list) and len(data) > 0 and "translation_text" in data[0]:
+        raw_text = data[0]["translation_text"]
+    elif isinstance(data, list) and len(data) > 0 and "generated_text" in data[0]:
+        raw_text = data[0]["generated_text"]
+    elif isinstance(data, dict) and "translation_text" in data:
+        raw_text = data["translation_text"]
+    else:
+        raw_text = str(data)
 
     if response_schema:
         return response_schema.model_validate_json(_clean_json_text(raw_text))
@@ -285,27 +459,35 @@ def _call_hf_indic_whisper(
     audio_or_image: Union[bytes, str],
     **kwargs: Any,
 ) -> str:
-    """Execute speech-to-text using Indic-Whisper on Hugging Face Inference API."""
-    api_key = os.getenv("HUGGINGFACE_API_KEY")
-    if not api_key:
-        raise AIProviderError("HUGGINGFACE_API_KEY is not set.")
-    
-    model = os.getenv("HF_INDICWHISPER_MODEL", HF_INDICWHISPER_DEFAULT_MODEL)
+    """Execute speech-to-text using Indic-Whisper / HF STT model."""
+    token = _get_hf_token()
+    if not token:
+        raise HFInferenceError("HF_TOKEN or HUGGINGFACE_API_KEY is not set.", status_code=401, short_reason="no_token")
+
+    endpoint_url, model = _resolve_hf_endpoint(
+        "HF_INDICWHISPER_MODEL",
+        "HF_INDICWHISPER_ENDPOINT_URL",
+        HF_INDICWHISPER_DEFAULT_MODEL,
+    )
     media_bytes = _extract_bytes(audio_or_image)
-    try:
-        with httpx.Client(timeout=httpx.Timeout(15.0, connect=3.0)) as client:
-            resp = client.post(
-                f"https://api-inference.huggingface.co/models/{model}",
-                headers={"Authorization": f"Bearer {api_key}"},
-                content=media_bytes
-            )
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, dict) and "text" in data:
-            return data["text"]
-        return str(data)
-    except Exception as e:
-        raise AIProviderError(f"HF Indic-Whisper request failed: {e}") from e
+    mime_type = kwargs.get("mime_type", "audio/wav")
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": mime_type,
+    }
+
+    resp = _post_hf_with_retry(
+        endpoint_url=endpoint_url,
+        headers=headers,
+        content_bytes=media_bytes,
+        timeout=float(kwargs.get("timeout", 30.0)),
+    )
+    data = resp.json()
+    if isinstance(data, dict) and "text" in data:
+        return data["text"]
+    return str(data)
+
 
 
 def _call_groq_text(
@@ -504,51 +686,74 @@ def call_multimodal(
     response_schema: Optional[Type[BaseModel]] = None,
     **kwargs: Any,
 ) -> Any:
-    """Execute multimodal AI call with near.ai primary and Gemini fallback.
-    For audio, tries Indic-Whisper for STT before Gemini.
+    """Execute multimodal AI call with designated fallback chains.
+
+    STT (audio):   near.ai (if key) -> Indic-Whisper (HF STT) -> Gemini
+    Vision (image): near.ai (if key) -> Gemini
     """
     is_audio = mime_type.startswith("audio/")
+    task_name = "stt" if is_audio else "vision"
+    tracker = ProviderChainTracker(task_name)
 
+    # 1. near.ai (primary if key is configured)
     near_ai_key = os.getenv("NEAR_AI_API_KEY", "").strip()
+    near_ai_model = os.getenv("NEAR_AI_MULTIMODAL_MODEL", NEAR_AI_DEFAULT_MULTIMODAL_MODEL)
     if near_ai_key:
         try:
-            logger.info("routing_multimodal_to_near_ai", provider="near.ai")
-            return _call_near_ai_multimodal(
+            res = _call_near_ai_multimodal(
                 prompt=prompt,
                 audio_or_image=audio_or_image,
                 mime_type=mime_type,
                 response_schema=response_schema,
                 **kwargs,
             )
-        except (NearAIUnavailableError, Exception) as exc:
-            logger.warning(
-                "near_ai_multimodal_failed_falling_back",
-                error=str(exc)
-            )
-
-    hf_key = os.getenv("HUGGINGFACE_API_KEY", "").strip()
-    if is_audio and hf_key:
-        try:
-            logger.info("routing_audio_to_indicwhisper", provider="indicwhisper")
-            transcript = _call_hf_indic_whisper(audio_or_image=audio_or_image, **kwargs)
-            # Feed transcript into text model to fulfill reasoning schema if requested
-            if response_schema:
-                text_prompt = f"Transcript from audio: {transcript}\n\nTask: {prompt}"
-                logger.info("indicwhisper_success_routing_transcript_to_text", provider="indicwhisper")
-                return call_text(prompt=text_prompt, response_schema=response_schema, **kwargs)
-            else:
-                return transcript
+            tracker.record_success("near_ai", near_ai_model)
+            tracker.log_chain()
+            return res
+        except NearAIUnavailableError as exc:
+            tracker.record_failure("near_ai", near_ai_model, exc_type=type(exc).__name__, reason="unavailable")
         except Exception as exc:
-            logger.warning("indicwhisper_failed_falling_back_to_gemini", error=str(exc))
+            tracker.record_failure("near_ai", near_ai_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+    else:
+        tracker.record_skip("near_ai", "no_key")
 
-    logger.info("routing_multimodal_to_gemini_fallback", provider="gemini")
-    return _call_gemini_multimodal(
-        prompt=prompt,
-        audio_or_image=audio_or_image,
-        mime_type=mime_type,
-        response_schema=response_schema,
-        **kwargs,
-    )
+    # 2. Indic-Whisper / HF STT (audio only)
+    if is_audio:
+        hf_token = _get_hf_token()
+        _, hf_stt_model = _resolve_hf_endpoint("HF_INDICWHISPER_MODEL", "HF_INDICWHISPER_ENDPOINT_URL", HF_INDICWHISPER_DEFAULT_MODEL)
+        if hf_token:
+            try:
+                transcript = _call_hf_indic_whisper(audio_or_image=audio_or_image, mime_type=mime_type, **kwargs)
+                tracker.record_success("indic_whisper", hf_stt_model)
+                tracker.log_chain()
+                if response_schema:
+                    text_prompt = f"Transcript from audio: {transcript}\n\nTask: {prompt}"
+                    return call_text(prompt=text_prompt, response_schema=response_schema, **kwargs)
+                return transcript
+            except HFInferenceError as exc:
+                tracker.record_failure("indic_whisper", hf_stt_model, status_code=exc.status_code, exc_type=type(exc).__name__, reason=exc.short_reason)
+            except Exception as exc:
+                tracker.record_failure("indic_whisper", hf_stt_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+        else:
+            tracker.record_skip("indic_whisper", "no_token")
+
+    # 3. Gemini fallback
+    gemini_model = os.getenv("GEMINI_MULTIMODAL_MODEL", GEMINI_MULTIMODAL_DEFAULT_MODEL)
+    try:
+        res = _call_gemini_multimodal(
+            prompt=prompt,
+            audio_or_image=audio_or_image,
+            mime_type=mime_type,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        tracker.record_success("gemini", gemini_model)
+        tracker.log_chain()
+        return res
+    except Exception as exc:
+        tracker.record_failure("gemini", gemini_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+        tracker.log_chain()
+        raise
 
 
 def call_text(
@@ -557,53 +762,86 @@ def call_text(
     response_schema: Optional[Type[BaseModel]] = None,
     **kwargs: Any,
 ) -> Any:
-    """Execute text reasoning AI call with near.ai primary, Sarvam-30B, then Groq fallback."""
+    """Execute text reasoning AI call with chain: near.ai (if key) -> Sarvam-30B -> Groq -> Gemini."""
+    tracker = ProviderChainTracker("text")
+
+    # 1. near.ai
     near_ai_key = os.getenv("NEAR_AI_API_KEY", "").strip()
+    near_ai_model = os.getenv("NEAR_AI_MODEL", NEAR_AI_DEFAULT_TEXT_MODEL)
     if near_ai_key:
         try:
-            logger.info("routing_text_to_near_ai", provider="near.ai")
-            return _call_near_ai_text(
+            res = _call_near_ai_text(
                 prompt=prompt,
                 system_prompt=system_prompt,
                 response_schema=response_schema,
                 **kwargs,
             )
-        except (NearAIUnavailableError, Exception) as exc:
-            logger.warning("near_ai_text_failed_falling_back", error=str(exc))
-
-    hf_key = os.getenv("HUGGINGFACE_API_KEY", "").strip()
-    if hf_key:
-        try:
-            logger.info("routing_text_to_sarvam", provider="sarvam")
-            return _call_hf_sarvam_text(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                response_schema=response_schema,
-                **kwargs,
-            )
+            tracker.record_success("near_ai", near_ai_model)
+            tracker.log_chain()
+            return res
+        except NearAIUnavailableError as exc:
+            tracker.record_failure("near_ai", near_ai_model, exc_type=type(exc).__name__, reason="unavailable")
         except Exception as exc:
-            logger.warning("sarvam_failed_falling_back", error=str(exc))
+            tracker.record_failure("near_ai", near_ai_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+    else:
+        tracker.record_skip("near_ai", "no_key")
 
+    # 2. Sarvam-30B
+    hf_token = _get_hf_token()
+    _, sarvam_model = _resolve_hf_endpoint("HF_SARVAM_MODEL", "HF_SARVAM_ENDPOINT_URL", HF_SARVAM_DEFAULT_MODEL)
+    if hf_token:
+        try:
+            res = _call_hf_sarvam_text(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                response_schema=response_schema,
+                **kwargs,
+            )
+            tracker.record_success("sarvam", sarvam_model)
+            tracker.log_chain()
+            return res
+        except HFInferenceError as exc:
+            tracker.record_failure("sarvam", sarvam_model, status_code=exc.status_code, exc_type=type(exc).__name__, reason=exc.short_reason)
+        except Exception as exc:
+            tracker.record_failure("sarvam", sarvam_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+    else:
+        tracker.record_skip("sarvam", "no_token")
+
+    # 3. Groq fallback
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    groq_model = os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL)
     if groq_key:
         try:
-            logger.info("routing_text_to_groq", provider="groq")
-            return _call_groq_text(
+            res = _call_groq_text(
                 prompt=prompt,
                 system_prompt=system_prompt,
                 response_schema=response_schema,
                 **kwargs,
             )
+            tracker.record_success("groq", groq_model)
+            tracker.log_chain()
+            return res
         except Exception as exc:
-            logger.warning("groq_failed_falling_back", error=str(exc))
+            tracker.record_failure("groq", groq_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+    else:
+        tracker.record_skip("groq", "no_key")
 
-    logger.info("routing_text_to_gemini_fallback", provider="gemini")
-    return _call_gemini_text(
-        prompt=prompt,
-        system_prompt=system_prompt,
-        response_schema=response_schema,
-        **kwargs,
-    )
+    # 4. Final Gemini fallback
+    gemini_model = os.getenv("GEMINI_MODEL", GEMINI_DEFAULT_MODEL)
+    try:
+        res = _call_gemini_text(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            response_schema=response_schema,
+            **kwargs,
+        )
+        tracker.record_success("gemini", gemini_model)
+        tracker.log_chain()
+        return res
+    except Exception as exc:
+        tracker.record_failure("gemini", gemini_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+        tracker.log_chain()
+        raise
 
 
 def call_translation(
@@ -611,25 +849,101 @@ def call_translation(
     response_schema: Optional[Type[BaseModel]] = None,
     **kwargs: Any,
 ) -> Any:
-    """Execute translation call with IndicTrans2 primary, Groq/Gemini fallback."""
-    hf_key = os.getenv("HUGGINGFACE_API_KEY", "").strip()
-    if hf_key:
+    """Execute translation call with designated chain: near.ai (if key) -> IndicTrans2 -> Sarvam-30B -> Groq -> Gemini."""
+    tracker = ProviderChainTracker("translation")
+
+    # 1. near.ai
+    near_ai_key = os.getenv("NEAR_AI_API_KEY", "").strip()
+    near_ai_model = os.getenv("NEAR_AI_MODEL", NEAR_AI_DEFAULT_TEXT_MODEL)
+    if near_ai_key:
         try:
-            logger.info("routing_translation_to_indictrans2", provider="indictrans2")
-            return _call_hf_indictrans2(prompt=prompt, response_schema=response_schema, **kwargs)
+            res = _call_near_ai_text(
+                prompt=prompt,
+                system_prompt="You are a professional medical translator. Translate accurately.",
+                response_schema=response_schema,
+                **kwargs,
+            )
+            tracker.record_success("near_ai", near_ai_model)
+            tracker.log_chain()
+            return res
+        except NearAIUnavailableError as exc:
+            tracker.record_failure("near_ai", near_ai_model, exc_type=type(exc).__name__, reason="unavailable")
         except Exception as exc:
-            logger.warning("indictrans2_failed_falling_back", error=str(exc))
-    
+            tracker.record_failure("near_ai", near_ai_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+    else:
+        tracker.record_skip("near_ai", "no_key")
+
+    # 2. IndicTrans2
+    hf_token = _get_hf_token()
+    _, indictrans_model = _resolve_hf_endpoint("HF_INDICTRANS_MODEL", "HF_INDICTRANS_ENDPOINT_URL", HF_INDICTRANS_DEFAULT_MODEL)
+    if hf_token:
+        try:
+            res = _call_hf_indictrans2(prompt=prompt, response_schema=response_schema, **kwargs)
+            tracker.record_success("indictrans2", indictrans_model)
+            tracker.log_chain()
+            return res
+        except HFInferenceError as exc:
+            tracker.record_failure("indictrans2", indictrans_model, status_code=exc.status_code, exc_type=type(exc).__name__, reason=exc.short_reason)
+        except Exception as exc:
+            tracker.record_failure("indictrans2", indictrans_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+    else:
+        tracker.record_skip("indictrans2", "no_token")
+
+    # 3. Sarvam-30B
+    _, sarvam_model = _resolve_hf_endpoint("HF_SARVAM_MODEL", "HF_SARVAM_ENDPOINT_URL", HF_SARVAM_DEFAULT_MODEL)
+    if hf_token:
+        try:
+            res = _call_hf_sarvam_text(
+                prompt=prompt,
+                system_prompt="You are a medical translator. Translate accurately.",
+                response_schema=response_schema,
+                **kwargs,
+            )
+            tracker.record_success("sarvam", sarvam_model)
+            tracker.log_chain()
+            return res
+        except HFInferenceError as exc:
+            tracker.record_failure("sarvam", sarvam_model, status_code=exc.status_code, exc_type=type(exc).__name__, reason=exc.short_reason)
+        except Exception as exc:
+            tracker.record_failure("sarvam", sarvam_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+    else:
+        tracker.record_skip("sarvam", "no_token")
+
+    # 4. Groq fallback
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    groq_model = os.getenv("GROQ_MODEL", GROQ_DEFAULT_MODEL)
     if groq_key:
         try:
-            logger.info("routing_translation_to_groq", provider="groq")
-            return _call_groq_text(prompt=prompt, response_schema=response_schema, **kwargs)
+            res = _call_groq_text(
+                prompt=prompt,
+                system_prompt="You are a medical translator. Translate accurately.",
+                response_schema=response_schema,
+                **kwargs,
+            )
+            tracker.record_success("groq", groq_model)
+            tracker.log_chain()
+            return res
         except Exception as exc:
-            logger.warning("groq_failed_falling_back", error=str(exc))
-            
-    logger.info("routing_translation_to_gemini_fallback", provider="gemini")
-    return _call_gemini_text(prompt=prompt, response_schema=response_schema, **kwargs)
+            tracker.record_failure("groq", groq_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+    else:
+        tracker.record_skip("groq", "no_key")
+
+    # 5. Final Gemini fallback
+    gemini_model = os.getenv("GEMINI_MODEL", GEMINI_DEFAULT_MODEL)
+    try:
+        res = _call_gemini_text(
+            prompt=prompt,
+            system_prompt="You are a medical translator. Translate accurately.",
+            response_schema=response_schema,
+            **kwargs,
+        )
+        tracker.record_success("gemini", gemini_model)
+        tracker.log_chain()
+        return res
+    except Exception as exc:
+        tracker.record_failure("gemini", gemini_model, exc_type=type(exc).__name__, reason=str(exc)[:30])
+        tracker.log_chain()
+        raise
 
 
 def call_critical_consensus(
@@ -671,8 +985,16 @@ def call_critical_consensus(
             
         try:
             results["other"] = f_oth.result()
+        except HFInferenceError as e:
+            logger.warning(
+                "consensus_other_failed",
+                error=str(e),
+                status_code=e.status_code,
+                short_reason=e.short_reason,
+            )
+            results["other"] = None
         except Exception as e:
-            logger.warning("consensus_other_failed", error=str(e))
+            logger.warning("consensus_other_failed", error=str(e), error_type=type(e).__name__)
             results["other"] = None
             
     res_gem = results["gemini"]

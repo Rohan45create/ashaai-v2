@@ -99,10 +99,10 @@ export const apiFetch = async (endpoint, options = {}) => {
       const detail = errorData.detail;
       if (detail && typeof detail === 'object') {
         errorMsg = detail.message || errorMsg;
-        errorCode = detail.code;
+        errorCode = detail.code || detail.error;
       } else {
-        errorMsg = detail || errorData.message || errorMsg;
-        errorCode = errorData.code;
+        errorMsg = errorData.message || detail || errorMsg;
+        errorCode = errorData.error || errorData.code;
       }
     } catch (e) {
       errorMsg = response.statusText;
@@ -115,6 +115,8 @@ export const apiFetch = async (endpoint, options = {}) => {
 
     const err = new Error(errorMsg);
     err.code = errorCode;
+    err.error = errorCode;
+    err.status = response.status;
     throw err;
   }
 
