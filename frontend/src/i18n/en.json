@@ -186,6 +186,10 @@
   "admitted": "Admitted",
   "discharged": "Discharged",
   "yet": "yet",
-  "months": "months",
-  "save_label": "Save"
+  "save_label": "Save",
+  "auth_worker_not_found": "No ASHA worker is registered with this number. Contact your supervisor.",
+  "auth_worker_inactive": "This ASHA worker account is deactivated. Contact your supervisor.",
+  "auth_worker_not_linked": "Your account is not set up for login yet. Contact your supervisor.",
+  "auth_invalid_phone": "Please enter a valid 10-digit mobile number.",
+  "auth_rate_limit_exceeded": "Too many attempts. Please wait a moment."
 }
