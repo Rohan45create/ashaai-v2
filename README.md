@@ -484,7 +484,7 @@ These shaped AshaAI's data model, module list, and feature priorities.
 
 ## 🤝 Contributors
 
-We are a team of six Computer Engineering students from [Maharashtra Institute of Technology](https://www.linkedin.com/school/mit-csn/posts/?feedView=all), Chhatrapati Sambhajinagar, Maharashtra, building AshaAI for the **Google Solution Challenge 2026** (**Build with AI** track by Hack2Skill and Google Developer Groups) and **Smart India Hackathon 2026**.
+We are a team of six Computer Engineering students from [Maharashtra Institute of Technology](https://www.linkedin.com/school/mit-csn/posts/?feedView=all), Chhatrapati Sambhajinagar, Maharashtra, building AshaAI for the **Smart India Hackathon 2026**.
 
 | Avatar | Name | Role | LinkedIn |
 |:---:|---|---|---|
