@@ -168,21 +168,31 @@ Deploy order: **ai-service → backend → frontend**, then point the NGO Apps S
   <tr>
     <td align="center" width="50%">
       <img src="https://res.cloudinary.com/drb4gctam/image/upload/v1781433793/img_5355.mov_2026-06-14_13-07-04.187_orqa2v.jpg" alt="Asha Center" width="350"/><br>
-      <p>Asha Center</p>
+      <p>Asha Center, Satara</p>
     </td>
     <td align="center" width="50%">
       <img src="https://res.cloudinary.com/drb4gctam/image/upload/v1781434866/img_5358_1_.mov_2026-06-14_16-23-44.861_lrhavt.jpg" alt="Asha Center" width="350"/><br>
-      <p>Asha Center</p>
+      <p>Asha Center, Satara</p>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <img src="https://res.cloudinary.com/drb4gctam/image/upload/v1781434872/img_5352.mov_2026-06-14_16-24-55.207_be27c6.jpg" alt="Asha Center" width="350"/><br>
-      <p>Asha Center</p>
+      <img src="https://res.cloudinary.com/drb4gctam/image/upload/v1792221473/WhatsApp_Image_2026-10-17_at_12.46.14_PM_o241hf.jpg" alt="Asha Center" width="350"/><br>
+      <p>Organized session for asha worker</p>
     </td>
     <td align="center" width="50%">
-      <img src="https://res.cloudinary.com/drb4gctam/image/upload/v1781434874/WhatsApp_Image_2026-06-14_at_4.24.49_PM_wlslic.jpg" alt="MNC Letter" width="120"/><br>
-      <p>Municipal Corporation Letter</p>
+      <img src="https://res.cloudinary.com/drb4gctam/image/upload/v1792221473/WhatsApp_Image_2026-10-17_at_12.46.13_PM_ixoyuf.jpg" alt="MNC Letter" width="350"/><br>
+      <p>Session at Maulana Azad Research center</p>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="https://res.cloudinary.com/drb4gctam/image/upload/v1792222478/WhatsApp_Image_2026-10-17_at_1.04.24_PM_pb1qm7.jpg" alt="Asha Center" width="350"/><br>
+      <p>Session Team</p>
+    </td>
+    <td align="center" width="50%">
+      <img src="https://res.cloudinary.com/drb4gctam/image/upload/v1792222244/imgonline-com-ua-twotoone-ws7yMwqBUxot_pgfsv0.jpg" alt="MNC Letter" width="350"/><br>
+      <p>Municipal Corporation Letters</p>
     </td>
   </tr>
   <tr>
